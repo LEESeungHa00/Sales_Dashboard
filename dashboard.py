@@ -366,20 +366,31 @@ if df is not None:
                 st.info("선택된 기간에 BDR 데이터가 없습니다.")
 
         elif selected_pic in BDR_NAMES:
-            st.subheader(f"{selected_pic} (BDR) 성과 요약")
-            deals_created_count = len(filtered_df)
-            meetings_booked_count = filtered_df['Meeting Booked Date'].notna().sum()
-            conversion_rate = meetings_booked_count / deals_created_count if deals_created_count > 0 else 0
-            
-            col1, col2 = st.columns(2)
-            col1.metric("총 생성 딜", f"{deals_created_count} 건")
-            col2.metric("미팅 확정 건수", f"{meetings_booked_count} 건")
-            st.metric("미팅 전환율 (Create → Booked)", f"{conversion_rate:.2%}")
-            
-            st.markdown("---")
-            st.subheader("미팅 확정 딜 목록")
-            booked_deals = filtered_df[filtered_df['Meeting Booked Date'].notna()]
-            st.dataframe(booked_deals[['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']], use_container_width=True)
+                    st.subheader(f"{selected_pic} (BDR) 성과 요약")
+                    deals_created_count = len(filtered_df)
+                    meetings_booked_count = filtered_df['Meeting Booked Date'].notna().sum()
+                    conversion_rate = meetings_booked_count / deals_created_count if deals_created_count > 0 else 0
+                    
+                    col1, col2 = st.columns(2)
+                    col1.metric("총 생성 딜", f"{deals_created_count} 건")
+                    col2.metric("미팅 확정 건수", f"{meetings_booked_count} 건")
+                    st.metric("미팅 전환율 (Create → Booked)", f"{conversion_rate:.2%}")
+                    
+                    st.markdown("---")
+                    st.subheader("미팅 확정 딜 목록")
+                    booked_deals = filtered_df[filtered_df['Meeting Booked Date'].notna()]
+                    st.dataframe(booked_deals[['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']], use_container_width=True)
+        
+                    st.markdown("---")
+                    st.subheader("BDR 기여 딜 현황")
+                    bdr_contribution_stages = ['Contract Sent', 'Contract Signed', 'Payment Complete', 'Closed Won']
+                    contribution_counts = filtered_df[filtered_df['Deal Stage'].isin(bdr_contribution_stages)]['Deal Stage'].value_counts()
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("계약서 발송", f"{contribution_counts.get('Contract Sent', 0)} 건")
+                    col2.metric("계약서 서명", f"{contribution_counts.get('Contract Signed', 0)} 건")
+                    col3.metric("결제 완료", f"{contribution_counts.get('Payment Complete', 0)} 건")
+                    col4.metric("계약 성사", f"{contribution_counts.get('Closed Won', 0)} 건")
 
         elif selected_pic in AE_NAMES:
             # 공통 데이터 계산
