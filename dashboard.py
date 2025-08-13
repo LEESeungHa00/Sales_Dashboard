@@ -501,9 +501,9 @@ if df is not None:
             st.subheader("📝 계약서 발송 후 진행 중인 딜")
             st.markdown("계약서가 발송되었지만 아직 성사/실패가 결정되지 않은 딜 목록입니다.")
             
-            contract_sent_deals = base_df[
-                (base_df['Contract Sent Date'].notna()) &
-                (~base_df['Deal Stage'].isin(won_stages + lost_stages))
+            contract_sent_deals = df[
+                (df['Contract Sent Date'].notna()) &
+                (~df['Deal Stage'].isin(won_stages + lost_stages))
             ].sort_values('Amount', ascending=False)
 
             if not contract_sent_deals.empty:
@@ -541,7 +541,7 @@ if df is not None:
                 st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
                 st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True)
             else:
-                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다.  ")
+                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
         else:
             st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'{stale_col}'** 속성을 포함하여 Export해야 합니다.")
 
