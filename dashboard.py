@@ -105,7 +105,7 @@ def hhmmss_to_days(time_str):
         return None
 
 # --- 대시보드 UI ---
-st.title("🎯 Strategic Sales Dashboard")
+st.title("🎯8월_AUG_Augment, Upgrade, Grow")
 st.markdown("팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
 
 # --- 사이드바: 파일 업로드 및 필터 ---
@@ -377,21 +377,24 @@ if df is not None:
                     st.metric("미팅 전환율 (Create → Booked)", f"{conversion_rate:.2%}")
                     
                     st.markdown("---")
-                    st.subheader("미팅 확정 딜 목록")
+                    st.subheader("미팅 확정 Deal 목록")
                     booked_deals = filtered_df[filtered_df['Meeting Booked Date'].notna()]
                     st.dataframe(booked_deals[['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']], use_container_width=True)
         
                     st.markdown("---")
-                    st.subheader("BDR 기여 딜 현황")
+            
+                    st.subheader("BDR 기여 Deal 현황")
+                    # BDR 기여도 계산은 전체 데이터(df)에서 수행
+                    bdr_deals_all_time = df[df['BDR'] == selected_pic]
                     bdr_contribution_stages = ['Contract Sent', 'Contract Signed', 'Payment Complete', 'Closed Won']
-                    contribution_counts = filtered_df[filtered_df['Deal Stage'].isin(bdr_contribution_stages)]['Deal Stage'].value_counts()
+                    contribution_counts = bdr_deals_all_time[bdr_deals_all_time['Deal Stage'].isin(bdr_contribution_stages)]['Deal Stage'].value_counts()
                     
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("계약서 발송", f"{contribution_counts.get('Contract Sent', 0)} 건")
                     col2.metric("계약서 서명", f"{contribution_counts.get('Contract Signed', 0)} 건")
                     col3.metric("결제 완료", f"{contribution_counts.get('Payment Complete', 0)} 건")
                     col4.metric("계약 성사", f"{contribution_counts.get('Closed Won', 0)} 건")
-
+            
         elif selected_pic in AE_NAMES:
             # 공통 데이터 계산
             won_deals_pic = filtered_df[filtered_df['Deal Stage'].isin(won_stages)]
@@ -424,7 +427,7 @@ if df is not None:
             st.markdown("---")
             
             # 담당자별 진행 중인 딜 현황 (Stage별)
-            st.subheader("진행 중인 딜 현황 (Stage별)")
+            st.subheader("진행 중인 Deal 현황 (Stage별)")
             if not open_deals_pic.empty:
                 stage_counts = open_deals_pic['Deal Stage'].value_counts().reset_index()
                 stage_counts.columns = ['Deal Stage', 'Count']
@@ -434,13 +437,13 @@ if df is not None:
             else:
                 st.info("현재 진행 중인 딜이 없습니다.")
 
-            st.subheader("계약 성사 딜 목록")
+            st.subheader("계약 성사 Deal 목록")
             if not won_deals_pic.empty:
                 st.dataframe(won_deals_pic[['Deal name', 'Amount', 'Close Date']].sort_values(by='Amount', ascending=False), use_container_width=True)
             else:
                 st.info("선택된 기간에 계약 성사된 딜이 없습니다.")
 
-            st.subheader("30일 내 마감 예정 딜")
+            st.subheader("30일 내 마감 예정 Deal")
             today = datetime.now()
             thirty_days_later = today + timedelta(days=30)
             
@@ -459,7 +462,7 @@ if df is not None:
 
     # --- Tab 3: 기회 & 리스크 관리 ---
     with tab3:
-        st.header("주요 딜 관리 및 리스크 분석")
+        st.header("주요 Deal 관리 및 리스크 분석")
 
         # "Next Focus" 섹션 수정
         st.subheader("🎯 Next Focus")
