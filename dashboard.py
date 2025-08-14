@@ -178,18 +178,18 @@ st.title("🎯8월_AUG_Augment, Upgrade, Grow")
 st.markdown("HubSpot Live! 팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
 
 # --- 사이드바: 파일 업로드 및 필터 ---
-with st.sidebar:
-    st.header("⚙️ 설정")
-    if df is None:
-        st.error("데이터 로딩에 실패했습니다. HubSpot 연결을 확인하세요.")
-        st.stop()
-    elif df.empty:
-        st.info("분석할 데이터가 없습니다.")
-        st.stop()
-    else:
-        st.success("데이터 로딩 완료!")
-        sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
-             
+    with st.sidebar:
+        st.header("⚙️ 설정")
+        if df is None:
+            st.error("데이터 로딩에 실패했습니다. HubSpot 연결을 확인하세요.")
+            st.stop()
+        elif df.empty:
+            st.info("분석할 데이터가 없습니다.")
+            st.stop()
+        else:
+            st.success("데이터 로딩 완료!")
+            sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
+                 
             # 날짜 필터 기준 선택
             st.markdown("---")
             filter_type = st.radio(
