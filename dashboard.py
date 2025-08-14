@@ -170,7 +170,7 @@ def load_data_from_hubspot():
             df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (24*60*60)
         
     # 컬럼 이름을 기존 코드와 호환되도록 변경
-    df.rename(columns={
+    rename_map = {
         'dealname': 'Deal name',
         'dealstage': 'Deal Stage',
         'amount': 'Amount',
@@ -184,7 +184,9 @@ def load_data_from_hubspot():
         'hs_lost_reason': 'Failure Reason',
         'close_lost_reason': 'Close lost reason',
         'dropped_reason_remark': 'Dropped Reason (Remark)',
-    }, inplace=True)
+    }
+    # 존재하는 컬럼만 rename
+    df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
     
     # 'Effective Close Date' 생성
     if 'Expected Closing Date' in df.columns and 'Close Date' in df.columns:
@@ -219,7 +221,7 @@ with st.sidebar:
         # 📥 허브스팟 원본 데이터 CSV 다운로드 버튼
         csv_data = df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="📥 연동된 DEAL LIST 다운로드",
+            label="📥 HubSpot DEAL LIST",
             data=csv_data,
             file_name=f"hubspot_deals_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -264,7 +266,6 @@ with st.sidebar:
 
 # --- 메인 대시보드 영역 ---
 if 'date_range' in locals() and df is not None and not df.empty:
-    # 📌 수정된 부분: Streamlit date_input에서 받은 timezone-naive 날짜에 타임존 정보를 추가합니다.
     start_date = pd.to_datetime(date_range[0]).tz_localize('Asia/Seoul')
     end_date = pd.to_datetime(date_range[1]).tz_localize('Asia/Seoul') + timedelta(days=1, seconds=-1)
     
@@ -274,10 +275,8 @@ if 'date_range' in locals() and df is not None and not df.empty:
         st.warning("선택된 조건에 해당하는 데이터가 없습니다.")
         st.stop()
 
-    # 계약 성사(Won) 및 실패(Lost) 단계 목록 정의
-    won_stages = ['Closed Won', 'Payment Complete', 'Contract Signed']
+    won_stages = ['Closed Won', 'Contract Signed', 'Payment Complete']
     lost_stages = ['Closed Lost', 'Dropped']
-
     
     # --- 탭 구성 ---
     tab1, tab2, tab3, tab4 = st.tabs(["🚀 통합 대시보드", "🧑‍💻 담당자별 상세 분석", "⚠️ 기회 & 리스크 관리", "📉 실패/드랍 분석"])
@@ -286,7 +285,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
     with tab1:
         st.header("팀 전체 현황 요약")
         
-        # KPI 계산 (base_df 기준)
         won_deals_total = base_df[base_df['Deal Stage'].isin(won_stages)]
         lost_deals_total = base_df[base_df['Deal Stage'].isin(lost_stages)]
         open_deals_total = base_df[~base_df['Deal Stage'].isin(won_stages + lost_stages)]
@@ -315,6 +313,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
         st.markdown("---")
         
         st.subheader("파이프라인 효율성 분석")
+        
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**단계별 전환율 (Funnel)**")
@@ -327,8 +326,8 @@ if 'date_range' in locals() and df is not None and not df.empty:
             funnel_data = []
             
             for stage, date_col in funnel_stages_map.items():
+                # 📌 수정된 부분: date_col이 base_df에 존재할 때만 처리
                 if date_col in base_df.columns:
-                    # 'Closed Won' 단계는 won_stages에 포함된 딜만 카운트
                     if stage == 'Closed Won':
                         count = base_df[base_df['Deal Stage'].isin(won_stages)][date_col].notna().sum()
                     else:
@@ -350,7 +349,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
         with col2:
             st.markdown("**단계별 평균 소요 시간 (일)**")
             
-            # 'Deal Won Date' 계산: Close, Signed, Payment 날짜 중 가장 빠른 날짜
             temp_df = base_df.copy()
             done_date_cols = ['Close Date', 'Contract Signed Date', 'Payment Complete Date']
             existing_done_cols = [col for col in done_date_cols if col in temp_df.columns]
@@ -369,7 +367,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
             for transition in stage_transitions:
                 start_col, end_col = transition['start'], transition['end']
                 
-                # end_col이 Deal Won Date일 경우, temp_df를 사용
                 df_to_use = temp_df if end_col == 'Deal Won Date' else base_df
 
                 if start_col in df_to_use.columns and end_col in df_to_use.columns:
@@ -391,7 +388,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 fig_time = px.bar(time_df, x='Avg Days', y='Transition', orientation='h', 
                                   title="단계별 평균 소요 시간", text='Avg Days')
                 fig_time.update_traces(texttemplate='%{text:.1f}일', textposition='auto')
-                # y축 순서를 영업 단계 순서대로 고정
                 category_order = [t['label'] for t in stage_transitions]
                 fig_time.update_layout(yaxis={'categoryorder':'array', 'categoryarray': category_order})
                 st.plotly_chart(fig_time, use_container_width=True)
@@ -418,7 +414,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
             st.subheader("AE Leaderboard")
             ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
             if not ae_base_df.empty:
-                # 📌 수정된 부분: groupby apply 함수 내에서 .get()을 사용하여 컬럼 존재 여부 확인
                 ae_stats = ae_base_df.groupby('Deal owner').apply(lambda x: pd.Series({
                     'Deals_Won': (x['Deal Stage'].isin(won_stages)).sum(),
                     'Deals_Lost': (x['Deal Stage'].isin(lost_stages)).sum(),
@@ -433,7 +428,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 ae_stats['Conversion_Rate (Meeting→Won)'] = ae_stats['Deals_Won'] / ae_stats['Meetings_Done']
                 ae_stats = ae_stats.sort_values(by='Total_Revenue', ascending=False).fillna(0)
                 
-                # 딜 개수를 정수형으로 변환
                 ae_stats['Deals_Won'] = ae_stats['Deals_Won'].astype(int)
                 ae_stats['Deals_Lost'] = ae_stats['Deals_Lost'].astype(int)
                 ae_stats['Meetings_Done'] = ae_stats['Meetings_Done'].astype(int)
@@ -450,7 +444,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
             st.subheader("BDR Leaderboard")
             bdr_base_df = base_df[base_df['BDR'].isin(BDR_NAMES)]
             if not bdr_base_df.empty:
-                # 📌 수정된 부분: groupby apply 함수 내에서 .get()을 사용하여 컬럼 존재 여부 확인
                 bdr_stats = bdr_base_df.groupby('BDR').apply(lambda x: pd.Series({
                     'Deals_Created': len(x),
                     'Meetings_Booked': x.get('Meeting Booked Date', pd.Series(dtype='datetime64[ns, Asia/Seoul]')).notna().sum()
@@ -474,18 +467,19 @@ if 'date_range' in locals() and df is not None and not df.empty:
             
             st.markdown("---")
             st.subheader("미팅 확정 딜 목록")
+            # 📌 수정된 부분: 필요한 컬럼이 filtered_df에 존재하는지 확인
+            display_cols = ['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']
+            existing_cols = [col for col in display_cols if col in filtered_df.columns]
             booked_deals = filtered_df[filtered_df.get('Meeting Booked Date', pd.Series(dtype='datetime64[ns, Asia/Seoul]')).notna()]
-            st.dataframe(booked_deals[['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']], use_container_width=True)
+            st.dataframe(booked_deals[existing_cols], use_container_width=True)
 
         elif selected_pic in AE_NAMES:
-            # 공통 데이터 계산
             won_deals_pic = filtered_df[filtered_df['Deal Stage'].isin(won_stages)]
             lost_deals_pic = filtered_df[filtered_df['Deal Stage'].isin(lost_stages)]
             open_deals_pic = filtered_df[~filtered_df['Deal Stage'].isin(won_stages + lost_stages)]
 
             st.subheader(f"{selected_pic} (AE) 성과 요약")
             
-            # KPIs
             meetings_done_count = filtered_df.get('Meeting Done Date', pd.Series(dtype='datetime64[ns, Asia/Seoul]')).notna().sum()
             contracts_sent_count = filtered_df.get('Contract Sent Date', pd.Series(dtype='datetime64[ns, Asia/Seoul]')).notna().sum()
             deals_done_count = len(won_deals_pic)
@@ -508,7 +502,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
 
             st.markdown("---")
             
-            # 담당자별 진행 중인 딜 현황 (Stage별)
             st.subheader("진행 중인 딜 현황 (Stage별)")
             if not open_deals_pic.empty:
                 stage_counts = open_deals_pic['Deal Stage'].value_counts().reset_index()
@@ -530,9 +523,9 @@ if 'date_range' in locals() and df is not None and not df.empty:
             thirty_days_later = today + timedelta(days=30)
             
             expected_deals = open_deals_pic[
-                (open_deals_pic['Effective Close Date'].notna()) &
-                (open_deals_pic['Effective Close Date'] >= pd.to_datetime(today.date()).tz_localize('Asia/Seoul')) &
-                (open_deals_pic['Effective Close Date'] <= pd.to_datetime(thirty_days_later.date()).tz_localize('Asia/Seoul'))
+                (open_deals_pic.get('Effective Close Date', pd.Series()).notna()) &
+                (open_deals_pic.get('Effective Close Date', pd.Series()) >= pd.to_datetime(today.date()).tz_localize('Asia/Seoul')) &
+                (open_deals_pic.get('Effective Close Date', pd.Series()) <= pd.to_datetime(thirty_days_later.date()).tz_localize('Asia/Seoul'))
             ].sort_values('Amount', ascending=False)
             
             if not expected_deals.empty:
@@ -546,25 +539,23 @@ if 'date_range' in locals() and df is not None and not df.empty:
     with tab3:
         st.header("주요 딜 관리 및 리스크 분석")
 
-        # "Next Focus" 섹션 수정
         st.subheader("🎯 Next Focus")
         focus_days = st.selectbox(
             "집중할 기간(일)을 선택하세요:",
             (30, 60, 90),
-            index=2 # 기본값 90일
+            index=2
         )
         st.markdown(f"오늘로부터 **예상 마감일이 {focus_days}일 이내**인, 금액이 큰 기회 목록입니다.")
         
         today = datetime.now()
         days_later = today + timedelta(days=focus_days)
         
-        # 전체 데이터(df)에서 필터링하여 현재 시점의 모든 기회를 확인
         all_open_deals = df[~df['Deal Stage'].isin(won_stages + lost_stages)]
         
         focus_deals = all_open_deals[
-            (all_open_deals['Effective Close Date'].notna()) &
-            (all_open_deals['Effective Close Date'] >= pd.to_datetime(today.date()).tz_localize('Asia/Seoul')) &
-            (all_open_deals['Effective Close Date'] <= pd.to_datetime(days_later.date()).tz_localize('Asia/Seoul'))
+            (all_open_deals.get('Effective Close Date', pd.Series()).notna()) &
+            (all_open_deals.get('Effective Close Date', pd.Series()) >= pd.to_datetime(today.date()).tz_localize('Asia/Seoul')) &
+            (all_open_deals.get('Effective Close Date', pd.Series()) <= pd.to_datetime(days_later.date()).tz_localize('Asia/Seoul'))
         ].sort_values('Amount', ascending=False)
         
         if not focus_deals.empty:
@@ -572,9 +563,8 @@ if 'date_range' in locals() and df is not None and not df.empty:
             st.dataframe(focus_deals[['Deal name', 'Deal owner', 'Amount', 'Effective Close Date', 'Days to Close']].rename(columns={'Effective Close Date': 'Expected Close Date'}).style.format({'Amount': '${:,.0f}'}), use_container_width=True)
         else:
             st.info(f"향후 {focus_days}일 내에 마감될 것으로 예상되는 딜이 없습니다.")
-            # 상세 현황 안내
             total_open_count = len(all_open_deals)
-            open_with_date_count = all_open_deals['Effective Close Date'].notna().sum()
+            open_with_date_count = all_open_deals.get('Effective Close Date', pd.Series()).notna().sum()
             st.markdown(f"""
             - 현재 진행 중인 총 딜: **{total_open_count}** 건
             - 그 중 예상/확정 마감일이 설정된 딜: **{open_with_date_count}** 건
@@ -598,7 +588,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
             st.markdown("계약서가 발송되었지만 아직 성사/실패가 결정되지 않은 딜 목록입니다.")
             
             contract_sent_deals = df[
-                (df['Contract Sent Date'].notna()) &
+                (df.get('Contract Sent Date', pd.Series()).notna()) &
                 (~df['Deal Stage'].isin(won_stages + lost_stages))
             ].sort_values('Amount', ascending=False)
 
@@ -617,7 +607,6 @@ if 'date_range' in locals() and df is not None and not df.empty:
         
         open_deals_base = base_df[~base_df['Deal Stage'].isin(won_stages + lost_stages)]
         
-        # Stage 선택 드롭다운
         available_stages = ['All Stages'] + sorted(open_deals_base['Deal Stage'].unique().tolist())
         selected_stage = st.selectbox("분석할 Deal Stage를 선택하세요:", available_stages)
 
@@ -647,14 +636,11 @@ if 'date_range' in locals() and df is not None and not df.empty:
         st.header("실패 및 드랍 딜 회고")
         
         st.subheader("실패/드랍 딜 목록 (최신순)")
-        # 전체 데이터(df)에서 필터링
         lost_dropped_deals = df[df['Deal Stage'].isin(lost_stages)]
 
         if not lost_dropped_deals.empty:
-            # 최종 수정일 기준으로 정렬
             sorted_deals = lost_dropped_deals.sort_values(by='Last Modified Date', ascending=False)
             
-            # 보여줄 컬럼 리스트 정의
             display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', 'Failure Reason']
             
             st.dataframe(
