@@ -95,16 +95,29 @@ def load_data_from_hubspot():
     }
     df.rename(columns=rename_map, inplace=True)
     
-    # Deal Owner ID를 이름으로 매핑 (이 부분은 실제 HubSpot 환경에 맞게 수정 필요)
-    # 예시: 오너 ID와 이름 매핑. 실제로는 API로 오너 정보를 가져와야 함.
-    owner_id_to_name = {
-      # 'owner_id_1': 'Seheon Bok', 
-      # ... 다른 오너들 ...
-    }
-    # df['Deal owner'] = df['Deal owner'].map(owner_id_to_name).fillna('Unassigned')
-    # 임시로 'Deal owner'가 이미 이름으로 들어온다고 가정. 실제 연동 시 위 로직 활성화 필요.
-    if 'Deal owner' not in df.columns:
+    # HubSpot Owners API를 호출하여 Owner ID와 이름 매핑 생성
+    with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
+        try:
+            owners_response = hubspot_client.crm.owners.owners_api.get_page(archived=False)
+            owners = owners_response.results
+            # Owner ID를 '이름 성' 형태의 전체 이름으로 매핑하는 딕셔너리 생성
+            owner_id_to_name = {
+                owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
+                for owner in owners
+            }
+        except ApiException as e:
+            st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
+            owner_id_to_name = {} # 오류 발생 시 빈 맵으로 계속 진행
+
+    # Deal Owner ID를 이름으로 변환
+    if 'hubspot_owner_id' in df.columns and owner_id_to_name:
+        df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name)
+        # 매핑되지 않은 경우(예: 삭제된 오너)를 'Unassigned'로 처리
+        df['Deal owner'].fillna('Unassigned', inplace=True)
+    else:
+        # 'hubspot_owner_id' 컬럼이 없거나 owner 정보를 가져오지 못한 경우
         df['Deal owner'] = 'Unassigned'
+
 
 
     # BDR 및 AE 담당자 딜 필터링
@@ -152,44 +165,31 @@ def load_data_from_hubspot():
 
 # --- 시간 변환 함수 ---
 def hhmmss_to_days(time_str):
-    """'HH:mm:ss' 형식의 문자열을 일(day) 단위로 변환합니다."""
-    if pd.isna(time_str):
-        return None
+    if pd.isna(time_str): return None
     try:
-        parts = str(time_str).split(':')
-        h = int(parts[0])
-        m = int(parts[1])
-        s = int(parts[2]) if len(parts) > 2 else 0
-        total_seconds = h * 3600 + m * 60 + s
+        # HubSpot의 hs_time_in_current_stage는 밀리초(ms) 단위일 수 있음
+        total_seconds = int(time_str) / 1000
         return total_seconds / (24 * 3600)
     except (ValueError, TypeError, IndexError):
         return None
 
 # --- 대시보드 UI ---
 st.title("🎯8월_AUG_Augment, Upgrade, Grow")
-st.markdown("팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
+st.markdown("HubSpot Live! 팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
 
 # --- 사이드바: 파일 업로드 및 필터 ---
 with st.sidebar:
     st.header("⚙️ 설정")
-    uploaded_file = st.file_uploader("HubSpot Deals CSV 파일을 업로드하세요.", type=["csv"])
-    
-    df = None
-    if uploaded_file:
-        df = load_data(uploaded_file)
-        if df is not None:
-            # 필수 컬럼 존재 여부 확인 로직 강화
-            required_cols = ['Deal owner', 'Deal Stage', 'Create Date', 'Close Date', 'Last Modified Date', 'Amount', 'Record ID', 'Deal name']
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
-                st.error(f"오류: CSV 파일에 필수 컬럼이 없습니다: {', '.join(missing_cols)}")
-                st.info("팁: 'Deal name' 컬럼이 없는 경우, 'Deal Name' 또는 'Contract: Company Name' 컬럼이 있는지 확인해주세요.")
-                st.stop()
-
-            st.success("데이터 로딩 완료!")
-            
-            sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
-            
+    if df is None:
+        st.error("데이터 로딩에 실패했습니다. HubSpot 연결을 확인하세요.")
+        st.stop()
+    elif df.empty:
+        st.info("분석할 데이터가 없습니다.")
+        st.stop()
+    else:
+        st.success("데이터 로딩 완료!")
+        sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
+             
             # 날짜 필터 기준 선택
             st.markdown("---")
             filter_type = st.radio(
@@ -224,23 +224,11 @@ with st.sidebar:
         st.info("분석을 시작하려면 CSV 파일을 업로드해주세요.")
 
 # --- 메인 대시보드 영역 ---
-if df is not None:
-    start_date = pd.to_datetime(date_range[0])
-    end_date = pd.to_datetime(date_range[1])
-
-    # 선택된 날짜 필터 기준으로 기본 데이터프레임 필터링
-    if filter_type == '생성일 기준 (Create Date)':
-        filter_col = 'Create Date'
-    elif filter_type == '예상/확정 마감일 기준':
-        filter_col = 'Effective Close Date'
-    else: # 최종 수정일 기준
-        filter_col = 'Last Modified Date'
-        
-    base_df = df[
-        (df[filter_col] >= start_date) & (df[filter_col] <= end_date)
-    ]
+if 'date_range' in locals() and df is not None and not df.empty:
+    start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
     
-    # 데이터가 없을 경우 메시지 표시
+    base_df = df[(df[filter_col] >= start_date) & (df[filter_col] <= end_date)].copy()
+    
     if base_df.empty:
         st.warning("선택된 조건에 해당하는 데이터가 없습니다.")
         st.stop()
@@ -248,6 +236,7 @@ if df is not None:
     # 계약 성사(Won) 및 실패(Lost) 단계 목록 정의
     won_stages = ['Closed Won', 'Payment Complete', 'Contract Signed']
     lost_stages = ['Closed Lost', 'Dropped']
+
     
     # --- 탭 구성 ---
     tab1, tab2, tab3, tab4 = st.tabs(["🚀 통합 대시보드", "🧑‍💻 담당자별 상세 분석", "⚠️ 기회 & 리스크 관리", "📉 실패/드랍 분석"])
