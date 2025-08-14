@@ -187,6 +187,16 @@ with st.sidebar:
         st.stop()
     else:
         st.success("데이터 로딩 완료!")
+
+        # 📥 허브스팟 원본 데이터 CSV 다운로드 버튼
+        csv_data = df.to_csv(index=False, encoding='utf-8-sig')
+        st.download_button(
+            label="📥 허브스팟 원본 데이터 다운로드",
+            data=csv_data,
+            file_name=f"hubspot_deals_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
         sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
                 
         # 날짜 필터 기준 선택
