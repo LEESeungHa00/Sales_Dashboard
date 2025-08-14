@@ -17,7 +17,6 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 
 # --- Deal Stage 수동 매핑 (최종본) ---
 DEAL_STAGE_MAPPING = {
-    # PM님이 수정해주신 최종 단계 반영
     'qualifiedtobuy': 'Meeting Booked',
     'decisionmakerboughtin': 'Meeting Done',
     'appointmentscheduled': 'New',
@@ -29,8 +28,6 @@ DEAL_STAGE_MAPPING = {
     '108877850': 'Payment Complete',
     '109960046': 'Dropped',
     '1105439053': 'Cancel',
-
-    # 'closedwon' ID는 'Closed Won'으로 최종 처리 (Proposal Sent & Service Validation 포함)
     'closedwon': 'Closed Won',
     'closedlost': 'Closed Lost',
 }
@@ -53,9 +50,10 @@ def load_data_from_hubspot():
             st.error(f"Owner 정보 로딩 실패. API 권한(crm.objects.owners.read)을 확인하세요. 오류: {e.body}")
             return None
 
+    # 📌 최종 수정: 'meeting_booked_date' -> 'demo_booked'로 내부 이름 변경
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", "hs_lastmodifieddate",
-        "hubspot_owner_id", "bdr", "hs_lost_reason", "contract_sent_date", "meeting_booked_date",
+        "hubspot_owner_id", "bdr", "hs_lost_reason", "contract_sent_date", "demo_booked",
         "meeting_done_date", "contract_signed_date", "payment_complete_date",
         "hs_expected_close_date", "hs_time_in_current_stage"
     ]
@@ -85,12 +83,14 @@ def load_data_from_hubspot():
             if col not in df.columns:
                 df[col] = pd.NaT if 'date' in col else None
         
+        # 📌 최종 수정: 'demo_booked'를 'Meeting Booked Date'로 이름 변경하도록 추가
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage ID', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
             'hs_time_in_current_stage': 'Days in Stage', 'hs_expected_close_date': 'Expected Closing Date',
             'hs_lost_reason': 'Failure Reason', 'contract_sent_date': 'Contract Sent Date',
-            'meeting_booked_date': 'Meeting Booked Date', 'meeting_done_date': 'Meeting Done Date',
+            'demo_booked': 'Meeting Booked Date', 
+            'meeting_done_date': 'Meeting Done Date',
             'contract_signed_date': 'Contract Signed Date', 'payment_complete_date': 'Payment Complete Date',
             'hubspot_owner_id': 'Deal owner', 'bdr': 'BDR'
         }
