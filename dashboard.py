@@ -15,6 +15,27 @@ BDR_NAMES = ['Sohee (Blair) Kim', 'Soorim Yu', 'Gyeol Jang', 'Minyoung Kim']
 AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park', 'Haran Bae']
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
+# --- Deal Stage ID 매핑 ---
+# HubSpot의 Deal Stage ID와 이름을 매핑합니다.
+# 이 값들은 HubSpot 계정 설정에 따라 달라질 수 있습니다.
+# CSV 파일에서 확인된 ID들을 기반으로 정의합니다.
+DEAL_STAGE_MAPPING = {
+    '109960046': 'Prospecting',
+    '108877850': 'Proposal Submitted',
+    'qualifiedtobuy': 'Qualified To Buy',
+    'decisionmakerboughtin': 'Decision Maker Bought-In',
+    'closedwon': 'Closed Won',
+    'closedlost': 'Closed Lost',
+    '108159780': 'Closing',
+    '129259600': 'Follow Up',
+    '998897767': 'Follow Up',
+    'appointmentscheduled': 'Appointment Scheduled',
+    '998897766': 'Qualified',
+    '108159779': 'Negotiation',
+    '998897768': 'Follow Up',
+    '1079056027': 'Lost',
+}
+
 # --- 데이터 로딩 및 캐싱 ---
 @st.cache_data(ttl=3600, show_spinner=False) # 1시간마다 데이터 새로고침
 def load_data_from_hubspot():
