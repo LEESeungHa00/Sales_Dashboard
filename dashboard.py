@@ -87,7 +87,7 @@ def load_data_from_hubspot():
             'dealname': 'Deal name', 'dealstage': 'Deal Stage ID', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
             'hs_v2_date_entered_current_stage': 'Date Entered Current Stage',
-            'expected_closing_date': 'Expected Closing Date',
+            'hs_expected_close_date': 'Expected Closing Date',
             'remark__free_text_': 'Dropped Reason (Remark)', 'contract_sent_date': 'Contract Sent Date',
             'demo_booked': 'Meeting Booked Date', 
             'demo_done_date': 'Meeting Done Date',
