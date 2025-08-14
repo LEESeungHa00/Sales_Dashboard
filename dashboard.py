@@ -16,7 +16,7 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
 # --- 데이터 로딩 및 캐싱 ---
-@st.cache_data(ttl=3600) # 1시간마다 데이터 새로고침
+@st.cache_data(ttl=3600, show_spinner=False) # 1시간마다 데이터 새로고침
 def load_data_from_hubspot():
     """
     HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
@@ -42,8 +42,8 @@ def load_data_from_hubspot():
         "lastmodifieddate", "deal_owner_id", "bdr", "hs_lost_reason",
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
-        "payment_complete_date", "hs_expected_amount", "hs_is_closed_won",
-        "hs_is_closed", "hubspot_owner_id", "hs_time_in_current_stage"
+        "payment_complete_date", "hs_expected_close_date", 
+        "hs_time_in_current_stage"
     ]
 
     # 페이지네이션을 통해 모든 Deal 데이터 가져오기
@@ -82,7 +82,8 @@ def load_data_from_hubspot():
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
         'hs_record_id': 'Record ID',
-        'hubspot_owner_id': 'Deal owner', # Deal Owner 이름은 별도 처리 필요
+        'hubspot_owner_id': 'hubspot_owner_id', # Keep original for mapping
+        'bdr': 'BDR', # bdr -> BDR 로 변경
         'hs_lost_reason': 'hs_lost_reason',
         'close_lost_reason': 'Close Lost Reason',
         'dropped_reason_remark': 'Dropped Reason (Remark)',
@@ -91,7 +92,7 @@ def load_data_from_hubspot():
         'meeting_done_date': 'Meeting Done Date',
         'contract_signed_date': 'Contract Signed Date',
         'payment_complete_date': 'Payment Complete Date',
-        'hs_expected_amount': 'Expected Closing Date', # 이 부분은 확인 필요
+        'hs_expected_close_date': 'Expected Closing Date',
         'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)'
     }
     df.rename(columns=rename_map, inplace=True)
@@ -164,11 +165,9 @@ def load_data_from_hubspot():
 
 
     # 숫자 및 기타 컬럼 처리
-    if 'Amount' in df.columns:
-        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+    if 'amount' in df.columns:
+        df['Amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
     df['BDR'] = df.get('BDR', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
-    df['Deal owner'] = df.get('Deal owner', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
-    df['Deal Stage'] = df.get('Deal Stage', pd.Series(index=df.index, dtype=object)).fillna('Unknown Stage')
     
     return df
 
