@@ -177,6 +177,7 @@ def hhmmss_to_days(time_str):
 st.title("🎯8월_AUG_Augment, Upgrade, Grow")
 st.markdown("HubSpot Live! 팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
 
+df = load_data_from_hubspot()
 # --- 사이드바: 파일 업로드 및 필터 ---
 with st.sidebar:
     st.header("⚙️ 설정")
