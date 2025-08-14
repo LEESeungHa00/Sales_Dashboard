@@ -96,6 +96,27 @@ def load_data_from_hubspot():
         'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)'
     }
     df.rename(columns=rename_map, inplace=True)
+
+    
+    # 필수 컬럼 누락 시 기본 생성
+    required_cols = list(rename_map.values())
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = pd.NaT
+
+    # --- Deal Stage ID → Stage Label 변환 ---
+    with st.spinner("HubSpot에서 Deal Stage 정보를 불러오는 중입니다..."):
+        try:
+            pipelines = hubspot_client.crm.pipelines.pipelines_api.get_all(object_type="deals")
+            stage_map = {}
+            for pipeline in pipelines.results:
+                for stage in pipeline.stages:
+                    stage_map[stage.id] = stage.label
+            if 'Deal Stage' in df.columns:
+                df['Deal Stage'] = df['Deal Stage'].map(stage_map).fillna(df['Deal Stage'])
+        except Exception as e:
+            st.warning(f"Deal Stage 라벨 변환 실패: {e}")
+
     
     # HubSpot Owners API를 호출하여 Owner ID와 이름 매핑 생성
     owner_id_to_name = {}
