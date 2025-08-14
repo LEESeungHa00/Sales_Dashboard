@@ -178,50 +178,48 @@ st.title("🎯8월_AUG_Augment, Upgrade, Grow")
 st.markdown("HubSpot Live! 팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
 
 # --- 사이드바: 파일 업로드 및 필터 ---
-    with st.sidebar:
-        st.header("⚙️ 설정")
-        if df is None:
-            st.error("데이터 로딩에 실패했습니다. HubSpot 연결을 확인하세요.")
-            st.stop()
-        elif df.empty:
-            st.info("분석할 데이터가 없습니다.")
-            st.stop()
-        else:
-            st.success("데이터 로딩 완료!")
-            sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
-                 
-            # 날짜 필터 기준 선택
-            st.markdown("---")
-            filter_type = st.radio(
-                "**날짜 필터 기준 선택**",
-                ('생성일 기준 (Create Date)', '예상/확정 마감일 기준', '최종 수정일 기준 (Last Modified Date)'),
-                help="**생성일 기준:** 특정 기간에 생성된 딜 분석\n\n**예상/확정 마감일 기준:** 특정 기간에 마감될 딜 분석 (Open 딜은 Expected Closing Date 기준)\n\n**최종 수정일 기준:** 특정 기간에 업데이트된 딜 분석"
-            )
-            st.markdown("---")
-
-            # 선택된 기준에 따라 날짜 범위 설정
-            if filter_type == '생성일 기준 (Create Date)':
-                filter_col = 'Create Date'
-            elif filter_type == '예상/확정 마감일 기준':
-                filter_col = 'Effective Close Date'
-            else: # 최종 수정일 기준
-                filter_col = 'Last Modified Date'
-            
-            if not df[filter_col].isna().all():
-                min_date = df[filter_col].min().date()
-                max_date = df[filter_col].max().date()
-                date_range = st.date_input(
-                    f"분석할 '{filter_col}' 범위 선택",
-                    value=(min_date, max_date),
-                    min_value=min_date,
-                    max_value=max_date,
-                )
-            else:
-                st.error(f"'{filter_col}' 컬럼에 데이터가 없어 날짜 필터를 설정할 수 없습니다.")
-                st.stop()
-            
+with st.sidebar:
+    st.header("⚙️ 설정")
+    if df is None:
+        st.error("데이터 로딩에 실패했습니다. HubSpot 연결을 확인하세요.")
+        st.stop()
+    elif df.empty:
+        st.info("분석할 데이터가 없습니다.")
+        st.stop()
     else:
-        st.info("분석을 시작하려면 CSV 파일을 업로드해주세요.")
+        st.success("데이터 로딩 완료!")
+        sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
+                 
+        # 날짜 필터 기준 선택
+        st.markdown("---")
+        filter_type = st.radio(
+            "**날짜 필터 기준 선택**",
+            ('생성일 기준 (Create Date)', '예상/확정 마감일 기준', '최종 수정일 기준 (Last Modified Date)'),
+            help="**생성일 기준:** 특정 기간에 생성된 딜 분석\n\n**예상/확정 마감일 기준:** 특정 기간에 마감될 딜 분석 (Open 딜은 Expected Closing Date 기준)\n\n**최종 수정일 기준:** 특정 기간에 업데이트된 딜 분석"
+        )
+        st.markdown("---")
+
+        # 선택된 기준에 따라 날짜 범위 설정
+        if filter_type == '생성일 기준 (Create Date)':
+            filter_col = 'Create Date'
+        elif filter_type == '예상/확정 마감일 기준':
+            filter_col = 'Effective Close Date'
+        else: # 최종 수정일 기준
+            filter_col = 'Last Modified Date'
+            
+        if not df[filter_col].isna().all():
+            min_date = df[filter_col].min().date()
+            max_date = df[filter_col].max().date()
+            date_range = st.date_input(
+                f"분석할 '{filter_col}' 범위 선택",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+            )
+        else:
+            st.error(f"'{filter_col}' 컬럼에 데이터가 없어 날짜 필터를 설정할 수 없습니다.")
+            st.stop()
+            
 
 # --- 메인 대시보드 영역 ---
 if 'date_range' in locals() and df is not None and not df.empty:
