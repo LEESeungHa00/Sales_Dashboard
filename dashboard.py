@@ -29,7 +29,7 @@ DEAL_STAGE_MAPPING = {
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data_from_hubspot():
     """
-    HubSpot API를 통해 대시보드에 필요한 '핵심' Deal 속성만 요청하여 안정적으로 데이터를 가져옵니다.
+    HubSpot API의 Pagination을 수동으로 처리하여 모든 Deal 데이터를 안정적으로 가져옵니다.
     """
     try:
         access_token = st.secrets["HUBSPOT_ACCESS_TOKEN"]
@@ -37,10 +37,7 @@ def load_data_from_hubspot():
     except KeyError:
         st.error("HubSpot 접근 토큰이 설정되지 않았습니다. Streamlit Cloud의 Secrets 설정을 확인하세요.")
         return None
-    except Exception as e:
-        st.error(f"HubSpot 클라이언트 초기화 중 오류 발생: {e}")
-        return None
-
+    
     # 1. Owner 정보 로딩
     with st.spinner("1/2: Owner 정보 로딩..."):
         try:
@@ -50,34 +47,49 @@ def load_data_from_hubspot():
             st.error(f"Owner 정보 로딩 실패. API 권한(crm.objects.owners.read)을 확인하세요. 오류: {e.body}")
             return None
 
-    # 2. 핵심 Deal 속성만 지정하여 데이터 로딩 (안정성 강화)
+    # 2. 핵심 Deal 속성만 지정하여 데이터 로딩
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", "hs_lastmodifieddate",
         "hubspot_owner_id", "bdr", "hs_lost_reason", "contract_sent_date", "meeting_booked_date",
         "meeting_done_date", "contract_signed_date", "payment_complete_date",
         "hs_expected_close_date", "hs_time_in_current_stage"
     ]
-    with st.spinner("2/2: Deal 데이터 로딩..."):
-        try:
-            all_deals_from_api = hubspot_client.crm.deals.get_all(properties=properties_to_fetch)
-            all_deals = [deal.to_dict() for deal in all_deals_from_api]
-        except ApiException as e:
-            st.error(f"Deal 데이터 로딩 실패. API 권한(crm.objects.deals.read)을 확인하세요. 오류: {e.body}")
-            return None
     
+    # 📌 수동 페이지네이션 로직 (핵심 개선 사항)
+    all_deals = []
+    after = None
+    with st.spinner("2/2: 모든 Deal 데이터를 페이지별로 로딩 중... (데이터 양에 따라 시간이 소요될 수 있습니다)"):
+        while True:
+            try:
+                page = hubspot_client.crm.deals.basic_api.get_page(
+                    limit=100,
+                    after=after,
+                    properties=properties_to_fetch,
+                    archived=False
+                )
+                all_deals.extend(page.results)
+                
+                # 다음 페이지가 있는지 확인
+                if page.paging and page.paging.next:
+                    after = page.paging.next.after
+                else:
+                    # 다음 페이지가 없으면 루프 종료
+                    break
+            except ApiException as e:
+                st.error(f"Deal 데이터 로딩 중 API 오류 발생. API 권한(crm.objects.deals.read)을 확인하세요. 오류: {e.body}")
+                return None
+
     if not all_deals:
         return pd.DataFrame()
 
-    df = pd.DataFrame([deal['properties'] for deal in all_deals])
+    df = pd.DataFrame([deal.to_dict()['properties'] for deal in all_deals])
 
     # 데이터 전처리
     if not df.empty:
-        # 요청한 모든 컬럼이 존재하는지 확인하고 없으면 생성
         for col in properties_to_fetch:
             if col not in df.columns:
                 df[col] = pd.NaT if 'date' in col else None
         
-        # HubSpot 내부 이름 -> 화면 표시 이름으로 변경
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
@@ -89,7 +101,6 @@ def load_data_from_hubspot():
         }
         df.rename(columns=rename_map, inplace=True)
 
-        # 데이터 타입 변환
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
         df['Deal Stage'] = df['Deal Stage'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['Deal Stage'])
         df['Deal owner'] = df['Deal owner'].astype(str).map(owner_id_to_name).fillna('Unassigned')
@@ -98,7 +109,8 @@ def load_data_from_hubspot():
         date_cols = ['Create Date', 'Close Date', 'Last Modified Date', 'Expected Closing Date', 'Contract Sent Date', 'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date']
         korea_tz = pytz.timezone('Asia/Seoul')
         for col in date_cols:
-            df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
 
         if 'Days in Stage' in df.columns:
             df['Days in Stage'] = pd.to_numeric(df['Days in Stage'], errors='coerce') / 86400000
