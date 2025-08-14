@@ -3,9 +3,11 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from hubspot import HubSpot
+from hubspot.crm.deals.exceptions import ApiException
 
 # --- 페이지 설정 ---
-st.set_page_config(layout="wide", page_title="Strategic Sales Dashboard")
+st.set_page_config(layout="wide", page_title="GS KR Sales Dashboard")
 
 # --- 담당자 리스트 ---
 BDR_NAMES = ['Sohee (Blair) Kim', 'Soorim Yu', 'Gyeol Jang', 'Minyoung Kim']
@@ -13,81 +15,140 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
 # --- 데이터 로딩 및 캐싱 ---
-@st.cache_data
-def load_data(uploaded_file):
+@st.cache_data(ttl=600) # 10분마다 데이터 새로고침
+def load_data_from_hubspot():
     """
-    업로드된 파일을 데이터프레임으로 로드하고 기본 전처리를 수행합니다.
+    HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
+    지정된 AE, BDR의 딜만 필터링합니다.
     """
     try:
-        df = pd.read_csv(uploaded_file)
-        # 컬럼 이름의 앞뒤 공백 제거
-        df.columns = df.columns.str.strip()
-
-        # --- Safer Renaming & Consolidation Logic ---
-        rename_map = {}
-        
-        # Deal name: Find first candidate and map it
-        deal_name_candidates = ['Deal Name', 'deal name']
-        found_deal_name = False
-        for col in deal_name_candidates:
-            if col in df.columns:
-                rename_map[col] = 'Deal name'
-                found_deal_name = True
-                break
-        
-        # If no 'Deal name' found, use 'Contract: Company Name' as fallback
-        if not found_deal_name and 'Contract: Company Name' in df.columns:
-            rename_map['Contract: Company Name'] = 'Deal name'
-
-        df.rename(columns=rename_map, inplace=True)
-
-        # 'Deal name'이 비어있을 경우, 'Contract: Company Name'으로 채우기 (if both existed)
-        if 'Deal name' in df.columns and 'Contract: Company Name' in df.columns:
-            df['Deal name'].fillna(df['Contract: Company Name'], inplace=True)
-
-        # 실패/드랍 사유 통합 컬럼 생성 (오류 수정)
-        df['Failure Reason'] = pd.NA
-        
-        lost_reason_candidates = ['hs_lost_reason', 'Close Lost Reason', 'close_lost_reason']
-        lost_col_found = next((col for col in lost_reason_candidates if col in df.columns), None)
-        if lost_col_found:
-            df['Failure Reason'] = df[lost_col_found]
-
-        dropped_reason_candidates = ['Dropped Reason (Remark)', 'Dropped Reason']
-        dropped_col_found = next((col for col in dropped_reason_candidates if col in df.columns), None)
-        if dropped_col_found:
-            dropped_mask = df['Deal Stage'] == 'Dropped'
-            df.loc[dropped_mask, 'Failure Reason'] = df.loc[dropped_mask, dropped_col_found]
-        # --- End of Logic ---
-
-        date_cols = [
-            'Create Date', 'Close Date', 'Contract Sent Date', 'Last Modified Date',
-            'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date',
-            'Expected Closing Date'
-        ]
-        for col in date_cols:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-        
-        # 'Effective Close Date' 생성: Open 딜은 Expected, Closed 딜은 Close Date 사용
-        if 'Expected Closing Date' in df.columns:
-            df['Effective Close Date'] = df['Expected Closing Date'].fillna(df['Close Date'])
-        else:
-            df['Effective Close Date'] = df['Close Date']
-
-
-        if 'Amount' in df.columns:
-            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
-        if 'BDR' in df.columns:
-            df['BDR'] = df['BDR'].fillna('Unassigned')
-        if 'Deal owner' in df.columns:
-            df['Deal owner'] = df['Deal owner'].fillna('Unassigned')
-        if 'Deal Stage' in df.columns:
-            df['Deal Stage'] = df['Deal Stage'].fillna('Unknown Stage')
-        return df
-    except Exception as e:
-        st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+        # Streamlit Secrets에서 HubSpot 접근 토큰 가져오기
+        access_token = st.secrets["HUBSPOT_ACCESS_TOKEN"]
+        hubspot_client = HubSpot(access_token=access_token)
+    except KeyError:
+        st.error("HubSpot 접근 토큰이 설정되지 않았습니다. Streamlit Cloud의 Secrets 설정을 확인하세요.")
         return None
+    except Exception as e:
+        st.error(f"HubSpot 클라이언트 초기화 중 오류 발생: {e}")
+        return None
+
+    all_deals = []
+    after = None
+    
+    # 대시보드에 필요한 모든 속성 정의
+    properties_to_fetch = [
+        "dealname", "dealstage", "amount", "createdate", "closedate", 
+        "lastmodifieddate", "deal_owner_id", "bdr", "hs_lost_reason",
+        "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
+        "meeting_booked_date", "meeting_done_date", "contract_signed_date",
+        "payment_complete_date", "hs_expected_amount", "hs_is_closed_won",
+        "hs_is_closed", "hubspot_owner_id", "hs_time_in_current_stage"
+    ]
+
+    # 페이지네이션을 통해 모든 Deal 데이터 가져오기
+    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (시간이 걸릴 수 있습니다)"):
+        try:
+            while True:
+                page = hubspot_client.crm.deals.basic_api.get_page(
+                    limit=100,
+                    after=after,
+                    properties=properties_to_fetch,
+                    archived=False
+                )
+                all_deals.extend(page.results)
+                if page.paging and page.paging.next:
+                    after = page.paging.next.after
+                else:
+                    break
+        except ApiException as e:
+            st.error(f"HubSpot API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
+            return None
+
+    if not all_deals:
+        st.warning("HubSpot에서 불러올 Deal 데이터가 없습니다.")
+        return pd.DataFrame() # 빈 데이터프레임 반환
+
+    # API 결과(deal 객체)를 딕셔너리 리스트로 변환
+    deals_list = [deal.to_dict()['properties'] for deal in all_deals]
+    df = pd.DataFrame(deals_list)
+
+    # --- 데이터 전처리 ---
+    # 컬럼 이름 변경 (API 이름 -> 대시보드에서 사용하는 이름)
+    rename_map = {
+        'dealname': 'Deal name',
+        'dealstage': 'Deal Stage',
+        'createdate': 'Create Date',
+        'closedate': 'Close Date',
+        'lastmodifieddate': 'Last Modified Date',
+        'hs_record_id': 'Record ID',
+        'hubspot_owner_id': 'Deal owner', # Deal Owner 이름은 별도 처리 필요
+        'hs_lost_reason': 'hs_lost_reason',
+        'close_lost_reason': 'Close Lost Reason',
+        'dropped_reason_remark': 'Dropped Reason (Remark)',
+        'contract_sent_date': 'Contract Sent Date',
+        'meeting_booked_date': 'Meeting Booked Date',
+        'meeting_done_date': 'Meeting Done Date',
+        'contract_signed_date': 'Contract Signed Date',
+        'payment_complete_date': 'Payment Complete Date',
+        'hs_expected_amount': 'Expected Closing Date', # 이 부분은 확인 필요
+        'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)'
+    }
+    df.rename(columns=rename_map, inplace=True)
+    
+    # Deal Owner ID를 이름으로 매핑 (이 부분은 실제 HubSpot 환경에 맞게 수정 필요)
+    # 예시: 오너 ID와 이름 매핑. 실제로는 API로 오너 정보를 가져와야 함.
+    owner_id_to_name = {
+      # 'owner_id_1': 'Seheon Bok', 
+      # ... 다른 오너들 ...
+    }
+    # df['Deal owner'] = df['Deal owner'].map(owner_id_to_name).fillna('Unassigned')
+    # 임시로 'Deal owner'가 이미 이름으로 들어온다고 가정. 실제 연동 시 위 로직 활성화 필요.
+    if 'Deal owner' not in df.columns:
+        df['Deal owner'] = 'Unassigned'
+
+
+    # BDR 및 AE 담당자 딜 필터링
+    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
+
+    if df.empty:
+        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
+        return pd.DataFrame()
+
+    # 실패/드랍 사유 통합 컬럼 생성
+    df['Failure Reason'] = df.get('hs_lost_reason', pd.Series(index=df.index, dtype=object))
+    if 'Close Lost Reason' in df.columns:
+        df['Failure Reason'].fillna(df['Close Lost Reason'], inplace=True)
+    if 'Dropped Reason (Remark)' in df.columns:
+        dropped_mask = df['Deal Stage'] == 'Dropped'
+        df.loc[dropped_mask, 'Failure Reason'] = df.loc[dropped_mask, 'Dropped Reason (Remark)']
+
+    # 날짜 컬럼 변환
+    date_cols = [
+        'Create Date', 'Close Date', 'Contract Sent Date', 'Last Modified Date',
+        'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date',
+        'Expected Closing Date'
+    ]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce').dt.tz_localize(None)
+
+    # 'Effective Close Date' 생성
+    if 'Expected Closing Date' in df.columns:
+        df['Effective Close Date'] = df['Expected Closing Date'].fillna(df['Close Date'])
+    elif 'Close Date' in df.columns:
+        df['Effective Close Date'] = df['Close Date']
+    else:
+        df['Effective Close Date'] = pd.NaT
+
+
+    # 숫자 및 기타 컬럼 처리
+    if 'Amount' in df.columns:
+        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+    df['BDR'] = df.get('BDR', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
+    df['Deal owner'] = df.get('Deal owner', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
+    df['Deal Stage'] = df.get('Deal Stage', pd.Series(index=df.index, dtype=object)).fillna('Unknown Stage')
+    
+    return df
 
 # --- 시간 변환 함수 ---
 def hhmmss_to_days(time_str):
