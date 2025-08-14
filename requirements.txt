@@ -1,5 +1,5 @@
 streamlit
 pandas
 plotly
-hubspot
-apiexception
+hubspot-api-client
+simplejson
