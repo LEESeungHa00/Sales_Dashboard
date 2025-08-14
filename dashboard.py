@@ -73,9 +73,10 @@ def load_data_from_hubspot():
         st.error("Owner 정보를 가져오지 못했습니다. API 권한을 확인하세요.")
         return None
 
+    # 📌 오류 수정: 'lastmodifieddate' -> 'hs_lastmodifieddate'로 속성 이름 변경
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate",
-        "lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
+        "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
         "payment_complete_date", "hs_expected_close_date",
@@ -110,24 +111,25 @@ def load_data_from_hubspot():
 
         df['Deal owner'] = df['hubspot_owner_id'].astype(str).map(owner_id_to_name).fillna('Unassigned')
         df['BDR'] = df['bdr'].astype(str).map(owner_id_to_name).fillna('Unassigned')
-
+        
+        # 📌 오류 수정: 'lastmodifieddate' -> 'hs_lastmodifieddate'로 속성 이름 변경
         date_cols = [
             'closedate', 'createdate', 'contract_sent_date', 'contract_signed_date', 
-            'payment_complete_date', 'hs_expected_close_date', 'lastmodifieddate', 
+            'payment_complete_date', 'hs_expected_close_date', 'hs_lastmodifieddate', 
             'meeting_booked_date', 'meeting_done_date'
         ]
         korea_tz = pytz.timezone('Asia/Seoul')
         for col in date_cols:
             if col in df.columns:
-                # 📌 오류 수정: 날짜를 UTC 기준으로 인식(localize)한 후, 서울 시간으로 변환(convert)
                 df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
         
         if 'hs_time_in_current_stage' in df.columns:
             df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (86400000)
         
+        # 📌 오류 수정: 'lastmodifieddate' -> 'hs_lastmodifieddate'로 속성 이름 변경
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
-            'createdate': 'Create Date', 'closedate': 'Close Date', 'lastmodifieddate': 'Last Modified Date',
+            'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
             'bdr': 'BDR_ID', 'hs_time_in_current_stage': 'Days in Stage',
             'hs_expected_close_date': 'Expected Closing Date', 'hs_lost_reason': 'Failure Reason',
             'close_lost_reason': 'Close lost reason', 'dropped_reason_remark': 'Dropped Reason (Remark)',
@@ -233,9 +235,12 @@ with tab1:
 
     if not won_deals_total.empty and 'Close Date' in won_deals_total.columns and 'Create Date' in won_deals_total.columns:
         valid_cycle_deals = won_deals_total.dropna(subset=['Close Date', 'Create Date'])
-        valid_cycle_deals = valid_cycle_deals.copy()
-        valid_cycle_deals['Sales Cycle'] = (valid_cycle_deals['Close Date'] - valid_cycle_deals['Create Date']).dt.days
-        avg_sales_cycle = valid_cycle_deals['Sales Cycle'][valid_cycle_deals['Sales Cycle'] >= 0].mean()
+        if not valid_cycle_deals.empty:
+            valid_cycle_deals = valid_cycle_deals.copy()
+            valid_cycle_deals['Sales Cycle'] = (valid_cycle_deals['Close Date'] - valid_cycle_deals['Create Date']).dt.days
+            avg_sales_cycle = valid_cycle_deals['Sales Cycle'][valid_cycle_deals['Sales Cycle'] >= 0].mean()
+        else:
+            avg_sales_cycle = 0
     else:
         avg_sales_cycle = 0
 
@@ -320,17 +325,8 @@ with tab2:
     
     if selected_pic == 'All':
         st.header("팀 전체 담당자별 성과 비교")
-        display_df = base_df
     else:
         st.header(f"'{selected_pic}' 상세 분석")
-        if selected_pic in AE_NAMES:
-            display_df = base_df[base_df['Deal owner'] == selected_pic]
-        elif selected_pic in BDR_NAMES:
-            display_df = base_df[base_df['BDR'] == selected_pic]
-
-    if display_df.empty:
-        st.info("선택된 조건에 해당하는 담당자의 데이터가 없습니다.")
-        st.stop()
     
     if selected_pic == 'All' or selected_pic in AE_NAMES:
         st.subheader("AE Leaderboard")
@@ -420,3 +416,4 @@ with tab4:
         st.dataframe(lost_dropped_deals.sort_values(by='Last Modified Date', ascending=False)[existing_display_cols].style.format({'Amount': '${:,.0f}'}), use_container_width=True, hide_index=True)
     else:
         st.success("선택된 기간에 실패 또는 드랍된 딜이 없습니다.")
+        
