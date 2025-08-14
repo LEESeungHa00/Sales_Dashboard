@@ -88,7 +88,7 @@ def load_data_from_hubspot():
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
             'hs_v2_date_entered_current_stage': 'Date Entered Current Stage',
             'expected_closing_date': 'Expected Closing Date',
-            'hs_lost_reason': 'Failure Reason', 'contract_sent_date': 'Contract Sent Date',
+            'remark__free_text_': 'Dropped Reason (Remark)', 'contract_sent_date': 'Contract Sent Date',
             'demo_booked': 'Meeting Booked Date', 
             'demo_done_date': 'Meeting Done Date',
             'contract_signed_date': 'Contract Signed Date', 'payment_complete_date': 'Payment Complete Date',
