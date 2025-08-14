@@ -37,7 +37,7 @@ DEAL_STAGE_MAPPING = {
 }
 
 # --- 데이터 로딩 및 캐싱 ---
-@st.cache_data(ttl=3600, show_spinner=False) # 1시간마다 데이터 새로고침
+@st.cache_data(ttl=10800, show_spinner=False) # 3시간마다 데이터 새로고침
 def load_data_from_hubspot():
     """
     HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
@@ -96,7 +96,7 @@ def load_data_from_hubspot():
     ]
 
     # 페이지네이션을 통해 모든 Deal 데이터 가져오기
-    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (시간이 걸릴 수 있습니다)"):
+    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (5분 내외의 대기가 필요할 수 있습니다)"):
         try:
             while True:
                 page = hubspot_client.crm.deals.basic_api.get_page(
@@ -116,8 +116,13 @@ def load_data_from_hubspot():
             st.error(f"데이터 로딩 중 예상치 못한 오류 발생: {e}")
             return None
     
-    df = pd.DataFrame(all_deals)
-
+    # ---'properties' 딕셔너리를 추출하여 DataFrame 생성 ---
+    if not all_deals:
+        st.warning("HubSpot에서 불러올 Deal 데이터가 없습니다.")
+        return pd.DataFrame()
+        
+    # 각 딜 객체의 'properties' 키를 추출하여 평탄화된 딕셔너리 리스트 생성
+    df = pd.DataFrame([deal['properties'] for deal in all_deals])
     # --- 데이터 전처리 로직 시작 ---
     if not df.empty:
         # 1. 'Deal Stage' 컬럼 매핑
@@ -126,7 +131,10 @@ def load_data_from_hubspot():
         # 2. 'hubspot_owner_id'와 'BDR' 컬럼 매핑
         # Owner ID를 이름으로 매핑하고, 매핑되지 않은 경우 'Unassigned'로 처리합니다.
         df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name).fillna('Unassigned')
-        df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
+        if 'bdr' in df.columns:
+            df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
+        else:
+            df['BDR'] = 'Unassigned' # bdr 속성이 없는 경우
 
         # 3. 날짜 컬럼 형식 통일
         date_cols = [
@@ -152,11 +160,12 @@ def load_data_from_hubspot():
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
         'hubspot_owner_id': 'hubspot_owner_id', # hubspot_owner_id는 ID로 유지
-        'bdr': 'BDR_ID', # BDR의 원래 ID를 BDR ID로 이름 변경
+        'bdr': 'BDR_ID', # bdr의 원래 ID를 BDR ID로 이름 변경
         'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)',
         'hs_expected_close_date': 'Expected Closing Date',
         'hs_lost_reason': 'Failure Reason',
-        'close_lost_reason': 'Close lost reason'
+        'close_lost_reason': 'Close lost reason',
+        'dropped_reason_remark': 'Dropped Reason (Remark)',
     }, inplace=True)
     
     # 'Effective Close Date' 생성
@@ -166,6 +175,9 @@ def load_data_from_hubspot():
         df['Effective Close Date'] = df['Close Date']
     else:
         df['Effective Close Date'] = pd.NaT
+    
+    # BDR, AE 담당자 딜 필터링
+    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
 
     return df
 
@@ -606,7 +618,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
                 st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True)
             else:
-                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. �")
+                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
         else:
             st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'hs_time_in_current_stage'** 속성을 포함하여 가져와야 합니다.")
 
@@ -632,3 +644,4 @@ if 'date_range' in locals() and df is not None and not df.empty:
             )
         else:
             st.info("'Closed Lost' 또는 'Dropped' 상태의 딜이 없습니다.")
+
