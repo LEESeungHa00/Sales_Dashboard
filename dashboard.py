@@ -134,8 +134,8 @@ df.rename(columns={
         'bdr': 'BDR'
 }, inplace=True)
     
-    # 전처리된 데이터프레임 반환
-    return df
+# 전처리된 데이터프레임 반환
+return df
 
 df = load_data_from_hubspot()
     
