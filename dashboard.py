@@ -50,10 +50,12 @@ def load_data_from_hubspot():
             st.error(f"Owner 정보 로딩 실패. API 권한(crm.objects.owners.read)을 확인하세요. 오류: {e.body}")
             return None
 
-    # 📌 최종 수정: 'meeting_booked_date' -> 'demo_booked'로 내부 이름 변경
+    # 📌 Deal Owner의 내부 이름 'hubspot_owner_id'가 이미 포함되어 있습니다.
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", "hs_lastmodifieddate",
-        "hubspot_owner_id", "bdr", "hs_lost_reason", "contract_sent_date", "demo_booked",
+        "hubspot_owner_id", 
+        "sdr", 
+        "hs_lost_reason", "contract_sent_date", "demo_booked",
         "meeting_done_date", "contract_signed_date", "payment_complete_date",
         "hs_expected_close_date", "hs_time_in_current_stage"
     ]
@@ -83,7 +85,7 @@ def load_data_from_hubspot():
             if col not in df.columns:
                 df[col] = pd.NaT if 'date' in col else None
         
-        # 📌 최종 수정: 'demo_booked'를 'Meeting Booked Date'로 이름 변경하도록 추가
+        # 📌 'hubspot_owner_id'를 'Deal owner'로 이름 변경하는 로직이 이미 포함되어 있습니다.
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage ID', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
@@ -92,12 +94,14 @@ def load_data_from_hubspot():
             'demo_booked': 'Meeting Booked Date', 
             'meeting_done_date': 'Meeting Done Date',
             'contract_signed_date': 'Contract Signed Date', 'payment_complete_date': 'Payment Complete Date',
-            'hubspot_owner_id': 'Deal owner', 'bdr': 'BDR'
+            'hubspot_owner_id': 'Deal owner',
+            'sdr': 'BDR'
         }
         df.rename(columns=rename_map, inplace=True)
 
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
         df['Deal Stage'] = df['Deal Stage ID'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['Deal Stage ID'])
+        # 📌 ID를 실제 담당자 이름으로 최종 변환하는 로직도 이미 포함되어 있습니다.
         df['Deal owner'] = df['Deal owner'].astype(str).map(owner_id_to_name).fillna('Unassigned')
         df['BDR'] = df['BDR'].astype(str).map(owner_id_to_name).fillna('Unassigned')
 
