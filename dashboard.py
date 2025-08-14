@@ -250,9 +250,10 @@ with st.sidebar:
 
 # --- 메인 대시보드 영역 ---
 if 'date_range' in locals() and df is not None and not df.empty:
-    # 📌 수정된 부분: Streamlit date_input에서 받은 timezone-naive 날짜에 타임존 정보를 추가합니다.
-    start_date = pd.to_datetime(date_range[0]).tz_localize('Asia/Seoul')
-    end_date = pd.to_datetime(date_range[1]).tz_localize('Asia/Seoul') + timedelta(days=1, seconds=-1)
+    # 📌 수정된 부분: st.date_input에서 받은 datetime.date 객체를 timezone-aware datetime으로 변환
+    korea_tz = pytz.timezone('Asia/Seoul')
+    start_date = korea_tz.localize(datetime.combine(date_range[0], datetime.min.time()))
+    end_date = korea_tz.localize(datetime.combine(date_range[1], datetime.max.time()))
     
     base_df = df[(df[filter_col] >= start_date) & (df[filter_col] <= end_date)].copy()
     
@@ -496,22 +497,22 @@ if 'date_range' in locals() and df is not None and not df.empty:
 
             st.subheader("계약 성사 딜 목록")
             if not won_deals_pic.empty:
-                st.dataframe(won_deals_pic[['Deal name', 'Amount', 'Close Date']], use_container_width=True)
+                st.dataframe(won_deals_pic[['Deal name', 'Amount', 'Deal Stage', 'Close Date']], use_container_width=True)
             else:
                 st.info("선택된 기간에 계약 성사된 딜이 없습니다.")
 
             st.subheader("30일 내 마감 예정 딜")
-            today = datetime.now().date()
+            today = datetime.now().astimezone(korea_tz)
             thirty_days_later = today + timedelta(days=30)
             
             expected_deals = open_deals_pic[
                 (open_deals_pic.get('Effective Close Date', pd.Series()).notna()) &
-                (open_deals_pic.get('Effective Close Date', pd.Series()) >= pd.to_datetime(today).tz_localize('Asia/Seoul')) &
-                (open_deals_pic.get('Effective Close Date', pd.Series()) <= pd.to_datetime(thirty_days_later).tz_localize('Asia/Seoul'))
+                (open_deals_pic.get('Effective Close Date', pd.Series()) >= today) &
+                (open_deals_pic.get('Effective Close Date', pd.Series()) <= thirty_days_later)
             ].sort_values('Amount', ascending=False)
             
             if not expected_deals.empty:
-                expected_deals['Days to Close'] = (expected_deals['Effective Close Date'] - datetime.now().astimezone(pytz.timezone('Asia/Seoul'))).dt.days
+                expected_deals['Days to Close'] = (expected_deals['Effective Close Date'] - today).dt.days
                 display_cols = ['Deal name', 'Amount', 'Effective Close Date', 'Days to Close']
                 existing_cols = [col for col in display_cols if col in expected_deals.columns]
                 st.dataframe(expected_deals[existing_cols].rename(columns={'Effective Close Date': 'Expected Close Date'}), use_container_width=True)
@@ -529,19 +530,19 @@ if 'date_range' in locals() and df is not None and not df.empty:
         )
         st.markdown(f"오늘로부터 **예상 마감일이 {focus_days}일 이내**인, 금액이 큰 기회 목록입니다.")
         
-        today = datetime.now().date()
+        today = datetime.now().astimezone(korea_tz)
         days_later = today + timedelta(days=focus_days)
         
         all_open_deals = df[~df['Deal Stage'].isin(won_stages + lost_stages)]
         
         focus_deals = all_open_deals[
             (all_open_deals.get('Effective Close Date', pd.Series()).notna()) &
-            (all_open_deals.get('Effective Close Date', pd.Series()) >= pd.to_datetime(today).tz_localize('Asia/Seoul')) &
-            (all_open_deals.get('Effective Close Date', pd.Series()) <= pd.to_datetime(days_later).tz_localize('Asia/Seoul'))
+            (all_open_deals.get('Effective Close Date', pd.Series()) >= today) &
+            (all_open_deals.get('Effective Close Date', pd.Series()) <= days_later)
         ].sort_values('Amount', ascending=False)
         
         if not focus_deals.empty:
-            focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - datetime.now().astimezone(pytz.timezone('Asia/Seoul'))).dt.days
+            focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - today).dt.days
             display_cols = ['Deal name', 'Deal owner', 'Amount', 'Effective Close Date', 'Days to Close']
             existing_cols = [col for col in display_cols if col in focus_deals.columns]
             st.dataframe(focus_deals[existing_cols].rename(columns={'Effective Close Date': 'Expected Close Date'}).style.format({'Amount': '${:,.0f}'}), use_container_width=True)
@@ -577,7 +578,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
             ].sort_values('Amount', ascending=False)
 
             if not contract_sent_deals.empty:
-                today = datetime.now().astimezone(pytz.timezone('Asia/Seoul'))
+                today = datetime.now().astimezone(korea_tz)
                 contract_sent_deals['Days Since Sent'] = (today - contract_sent_deals['Contract Sent Date']).dt.days
                 display_cols = ['Deal name', 'Deal owner', 'Amount', 'Contract Sent Date', 'Days Since Sent']
                 existing_cols = [col for col in display_cols if col in contract_sent_deals.columns]
