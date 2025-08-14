@@ -58,10 +58,19 @@ def load_data_from_hubspot():
     owner_id_to_name = {}
     with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
         try:
-            owners = hubspot_client.crm.owners.owners_api.get_all()
+            all_owners = []
+            after_owner = None
+            while True:
+                page = hubspot_client.crm.owners.owners_api.get_page(after=after_owner)
+                all_owners.extend(page.results)
+                if page.paging and page.paging.next:
+                    after_owner = page.paging.next.after
+                else:
+                    break
+            
             owner_id_to_name = {
                 owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
-                for owner in owners.results
+                for owner in all_owners
             }
         except OwnersApiException as e:
             st.error(f"HubSpot Owners API 호출 중 오류 발생: {e}")
@@ -190,7 +199,7 @@ with st.sidebar:
         # 📥 허브스팟 원본 데이터 CSV 다운로드 버튼
         csv_data = df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="� 허브스팟 원본 데이터 다운로드",
+            label="📥 허브스팟 원본 데이터 다운로드",
             data=csv_data,
             file_name=f"hubspot_deals_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -597,7 +606,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
                 st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True)
             else:
-                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
+                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. �")
         else:
             st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'hs_time_in_current_stage'** 속성을 포함하여 가져와야 합니다.")
 
@@ -623,4 +632,3 @@ if 'date_range' in locals() and df is not None and not df.empty:
             )
         else:
             st.info("'Closed Lost' 또는 'Dropped' 상태의 딜이 없습니다.")
-
