@@ -6,31 +6,22 @@ from datetime import datetime, timedelta
 from hubspot import HubSpot
 from hubspot.crm.deals.exceptions import ApiException
 from hubspot.crm.owners.exceptions import ApiException as OwnersApiException
+from hubspot.crm.pipelines.exceptions import ApiException as PipelinesApiException
+from hubspot.crm.properties.exceptions import ApiException as PropertiesApiException
 import pytz
 
 # --- 페이지 설정 ---
 st.set_page_config(layout="wide", page_title="GS KR Sales Dashboard")
 
-# --- 담당자 리스트 (우리 팀에 해당하는 인원만 정의) ---
+# --- 상수 정의 ---
 BDR_NAMES = ['Sohee (Blair) Kim', 'Soorim Yu', 'Gyeol Jang', 'Minyoung Kim']
 AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park', 'Haran Bae']
 
-# --- Deal Stage ID 매핑 ---
-DEAL_STAGE_MAPPING = {
-    '109960046': 'Prospecting', '108877850': 'Proposal Submitted', 'qualifiedtobuy': 'Qualified To Buy',
-    'decisionmakerboughtin': 'Decision Maker Bought-In', 'closedwon': 'Closed Won', 'closedlost': 'Closed Lost',
-    '108159780': 'Closing', '129259600': 'Follow Up', '998897767': 'Follow Up',
-    'appointmentscheduled': 'Appointment Scheduled', '998897766': 'Qualified', '108159779': 'Negotiation',
-    '998897768': 'Follow Up', '1079056027': 'Lost', 'unassigned': 'Unassigned',
-    'qualified': 'Qualified', 'prospecting': 'Prospecting'
-}
-
-# --- 데이터 로딩 및 캐싱 ---
+# --- 데이터 로딩 및 전처리 ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data_from_hubspot():
     """
-    HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
-    Owner 정보와 Deal 정보를 가져와서 하나의 DataFrame으로 만듭니다.
+    HubSpot API를 통해 모든 Deal 속성을 동적으로 파악하고, 모든 데이터를 가져와 전처리합니다.
     """
     try:
         access_token = st.secrets["HUBSPOT_ACCESS_TOKEN"]
@@ -42,63 +33,61 @@ def load_data_from_hubspot():
         st.error(f"HubSpot 클라이언트 초기화 중 오류 발생: {e}")
         return None
 
-    with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
+    # 1. Owner 정보 로딩
+    with st.spinner("1/4: HubSpot에서 Owner 정보를 불러오는 중..."):
         try:
             all_owners = hubspot_client.crm.owners.get_all()
             owner_id_to_name = {owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip() for owner in all_owners}
-        except OwnersApiException as e:
-            st.error(f"HubSpot Owners 정보를 가져오는 데 실패했습니다: {e.body}")
-            return None
-        except Exception as e:
-            st.error(f"Owner 정보 로딩 중 오류 발생: {e}")
+        except OwnersApiException:
+            st.error("Owner 정보 로딩 실패. API 권한을 확인하세요.")
             return None
 
-    properties_to_fetch = [
-        "dealname", "dealstage", "amount", "createdate", "closedate", "hs_lastmodifieddate",
-        "hubspot_owner_id", "bdr", "hs_lost_reason", "contract_sent_date", "meeting_booked_date",
-        "meeting_done_date", "contract_signed_date", "payment_complete_date",
-        "hs_expected_close_date", "hs_time_in_current_stage"
-    ]
+    # 2. Deal Stage 정보 동적 로딩
+    DEAL_STAGE_MAPPING = {}
+    with st.spinner("2/4: HubSpot에서 Deal Stage 정보를 동적으로 불러오는 중..."):
+        try:
+            pipelines_api = hubspot_client.crm.pipelines.pipelines_api
+            deal_pipelines = pipelines_api.get_all(object_type="deals")
+            for pipeline in deal_pipelines.results:
+                stages_api = hubspot_client.crm.pipelines.pipeline_stages_api
+                stages = stages_api.get_all(pipeline_id=pipeline.id, object_type="deals")
+                for stage in stages.results:
+                    DEAL_STAGE_MAPPING[stage.id] = stage.label
+        except PipelinesApiException:
+            st.warning("Deal Stage 정보를 동적으로 불러오는 데 실패했습니다.")
+            DEAL_STAGE_MAPPING.update({'closedwon': 'Closed Won', 'closedlost': 'Closed Lost'})
 
-    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다..."):
+    # 3. 모든 Deal 속성 이름 가져오기
+    properties_to_fetch = []
+    with st.spinner("3/4: HubSpot에서 모든 Deal 속성 목록을 가져오는 중..."):
+        try:
+            properties_api = hubspot_client.crm.properties.core_api
+            deal_properties = properties_api.get_all(object_type="deal")
+            properties_to_fetch = [prop.name for prop in deal_properties.results]
+        except PropertiesApiException:
+            st.error("HubSpot에서 Deal 속성 목록을 가져오는 데 실패했습니다. API 권한을 확인하세요.")
+            return None
+        
+    if not properties_to_fetch:
+        st.error("가져올 Deal 속성이 없습니다.")
+        return None
+
+    # 4. 모든 속성을 사용하여 Deal 데이터 로딩
+    with st.spinner("4/4: HubSpot에서 모든 Deal 데이터를 불러오는 중... (시간이 소요될 수 있습니다)"):
         try:
             all_deals_from_api = hubspot_client.crm.deals.get_all(properties=properties_to_fetch)
             all_deals = [deal.to_dict() for deal in all_deals_from_api]
-        except ApiException as e:
-            st.error(f"HubSpot Deal 정보를 가져오는 데 실패했습니다: {e.body}")
+        except ApiException:
+            st.error("Deal 정보 로딩 실패. API 권한을 확인하세요.")
             return None
-        except Exception as e:
-            st.error(f"Deal 정보 로딩 중 오류 발생: {e}")
-            return None
-
+    
     if not all_deals:
         return pd.DataFrame()
 
     df = pd.DataFrame([deal['properties'] for deal in all_deals])
 
+    # 데이터 전처리
     if not df.empty:
-        for col in properties_to_fetch:
-            if col not in df.columns:
-                df[col] = pd.NaT if 'date' in col else None
-
-        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-        df['dealstage'] = df['dealstage'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
-        df['Deal owner'] = df['hubspot_owner_id'].astype(str).map(owner_id_to_name).fillna('Unassigned')
-        df['BDR'] = df['bdr'].astype(str).map(owner_id_to_name).fillna('Unassigned')
-
-        date_cols = [
-            'closedate', 'createdate', 'contract_sent_date', 'contract_signed_date',
-            'payment_complete_date', 'hs_expected_close_date', 'hs_lastmodifieddate',
-            'meeting_booked_date', 'meeting_done_date'
-        ]
-        korea_tz = pytz.timezone('Asia/Seoul')
-        for col in date_cols:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
-
-        if 'hs_time_in_current_stage' in df.columns:
-            df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / 86400000
-
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
@@ -107,20 +96,57 @@ def load_data_from_hubspot():
             'meeting_booked_date': 'Meeting Booked Date', 'meeting_done_date': 'Meeting Done Date',
             'contract_signed_date': 'Contract Signed Date', 'payment_complete_date': 'Payment Complete Date'
         }
-        df.rename(columns=rename_map, inplace=True)
+        
+        existing_cols_rename = {k: v for k, v in rename_map.items() if k in df.columns}
+        df.rename(columns=existing_cols_rename, inplace=True)
+        
+        core_display_cols = ['Deal name', 'Deal Stage', 'Amount', 'Create Date', 'Close Date', 'Last Modified Date', 'Deal owner', 'BDR']
+        for col in core_display_cols:
+             if col not in df.columns:
+                internal_name_found = False
+                for internal, display in rename_map.items():
+                    if display == col and internal in df.columns:
+                        df.rename(columns={internal: display}, inplace=True)
+                        internal_name_found = True
+                        break
+                if not internal_name_found:
+                    df[col] = pd.NA
 
-        df['Effective Close Date'] = df['Close Date'].fillna(df['Expected Closing Date'])
+        if 'Amount' in df.columns:
+            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+        
+        if 'Deal Stage' in df.columns:
+            df['dealstage_id'] = df['Deal Stage']
+            df['Deal Stage'] = df['Deal Stage'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['dealstage_id'])
+
+        if 'hubspot_owner_id' in df.columns:
+            df['Deal owner'] = df['hubspot_owner_id'].astype(str).map(owner_id_to_name).fillna('Unassigned')
+        if 'bdr' in df.columns:
+            df['BDR'] = df['bdr'].astype(str).map(owner_id_to_name).fillna('Unassigned')
+
+        date_cols_display = ['Create Date', 'Close Date', 'Last Modified Date', 'Expected Closing Date', 'Contract Sent Date', 'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date']
+        korea_tz = pytz.timezone('Asia/Seoul')
+        for col in date_cols_display:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
+
+        if 'Days in Stage' in df.columns:
+            df['Days in Stage'] = pd.to_numeric(df['Days in Stage'], errors='coerce') / 86400000
+
+        if 'Effective Close Date' not in df.columns and 'Close Date' in df.columns and 'Expected Closing Date' in df.columns:
+            df['Effective Close Date'] = df['Close Date'].fillna(df['Expected Closing Date'])
+        
         df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
         
     return df
 
 # --- Streamlit UI 시작 ---
 st.title("🎯 GS KR Sales Dashboard")
-st.markdown("HubSpot Live! 팀의 영업 현황을 진단하고, 데이터를 기반으로 **성장 전략**을 수립합니다.")
+st.markdown("HubSpot의 데이터를 연동하여 실시간 영업 현황 분석을 제공합니다.")
 df = load_data_from_hubspot()
 
 if df is None or df.empty:
-    st.info("HubSpot에서 분석할 데이터를 찾을 수 없습니다.")
+    st.info("HubSpot에서 분석할 데이터를 찾을 수 없거나 로딩에 실패했습니다.")
     st.stop()
 
 # --- 사이드바 ---
@@ -134,7 +160,7 @@ with st.sidebar:
     filter_type = st.radio("**날짜 필터 기준**", ('생성일 기준 (Create Date)', '마감일 기준 (Effective Close Date)', '최종 수정일 기준 (Last Modified Date)'))
     filter_col_map = {'생성일 기준 (Create Date)': 'Create Date', '마감일 기준 (Effective Close Date)': 'Effective Close Date', '최종 수정일 기준 (Last Modified Date)': 'Last Modified Date'}
     filter_col = filter_col_map[filter_type]
-    if df[filter_col].notna().any():
+    if filter_col in df.columns and df[filter_col].notna().any():
         min_date, max_date = df[filter_col].min().date(), df[filter_col].max().date()
         date_range = st.date_input(f"'{filter_col}' 범위 선택", (min_date, max_date), min_date, max_date)
     else:
@@ -155,7 +181,6 @@ won_stages = ['Closed Won', 'Contract Signed', 'Payment Complete']
 lost_stages = ['Closed Lost', 'Dropped', 'Lost']
 open_stages = [stage for stage in base_df['Deal Stage'].unique() if stage not in won_stages + lost_stages]
 
-# 모든 탭을 포함하여 생성
 tab1, tab2, tab3, tab4 = st.tabs(["🚀 통합 대시보드", "🧑‍💻 담당자별 상세 분석", "⚠️ 기회 & 리스크 관리", "📉 실패/드랍 분석"])
 
 with tab1:
@@ -183,16 +208,114 @@ with tab1:
 
     st.markdown("---")
     st.subheader("파이프라인 분석")
-    # ... (tab1의 나머지 코드는 이전과 동일)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**단계별 전환율 (Funnel)**")
+        funnel_stages_map = {'Meeting Booked': 'Meeting Booked Date', 'Meeting Done': 'Meeting Done Date', 'Contract Sent': 'Contract Sent Date', 'Closed Won': 'Close Date'}
+        funnel_data = [{'Stage': 'Total Deals', 'Count': len(base_df)}]
+        for stage, date_col in funnel_stages_map.items():
+            if date_col in base_df.columns:
+                count = base_df[base_df['Deal Stage'].isin(won_stages)][date_col].notna().sum() if stage == 'Closed Won' else base_df[date_col].notna().sum()
+                funnel_data.append({'Stage': stage, 'Count': count})
+        if len(funnel_data) > 1:
+            st.plotly_chart(go.Figure(go.Funnel(y=[d['Stage'] for d in funnel_data], x=[d['Count'] for d in funnel_data], textposition="inside", textinfo="value+percent previous")), use_container_width=True)
+
+    with col2:
+        st.markdown("**단계별 평균 소요 시간 (일)**")
+        temp_df = base_df.copy()
+        date_cols_for_won = ['Close Date', 'Contract Signed Date', 'Payment Complete Date']
+        existing_won_date_cols = [col for col in date_cols_for_won if col in temp_df.columns and temp_df[col].notna().any()]
+        if existing_won_date_cols:
+            temp_df['Deal Won Date'] = temp_df[existing_won_date_cols].min(axis=1, skipna=True)
+        stage_transitions = [
+            {'label': 'Create → M.Booked', 'start': 'Create Date', 'end': 'Meeting Booked Date'},
+            {'label': 'M.Booked → M.Done', 'start': 'Meeting Booked Date', 'end': 'Meeting Done Date'},
+            {'label': 'M.Done → C.Sent', 'start': 'Meeting Done Date', 'end': 'Contract Sent Date'},
+            {'label': 'C.Sent → Deal Won', 'start': 'Contract Sent Date', 'end': 'Deal Won Date'}
+        ]
+        avg_times = []
+        for transition in stage_transitions:
+            start_col, end_col = transition['start'], transition['end']
+            df_to_use = temp_df if end_col == 'Deal Won Date' else base_df
+            if start_col in df_to_use.columns and end_col in df_to_use.columns:
+                valid_deals = df_to_use.dropna(subset=[start_col, end_col])
+                if not valid_deals.empty:
+                    time_diff = (valid_deals[end_col] - valid_deals[start_col]).dt.days
+                    avg_days = time_diff[time_diff >= 0].mean()
+                    if pd.notna(avg_days):
+                        avg_times.append({'Transition': transition['label'], 'Avg Days': avg_days})
+        if avg_times:
+            time_df = pd.DataFrame(avg_times)
+            fig_time = px.bar(time_df, x='Avg Days', y='Transition', orientation='h', text='Avg Days')
+            fig_time.update_traces(texttemplate='%{text:.1f}일', textposition='outside')
+            fig_time.update_layout(yaxis_title=None, xaxis_title="평균 소요 일수")
+            st.plotly_chart(fig_time, use_container_width=True)
+        else:
+            st.info("단계별 소요 시간 계산에 필요한 날짜 데이터가 부족합니다.")
 
 with tab2:
     st.header("담당자별 상세 분석")
     st.subheader("AE Leaderboard")
-    # ... (tab2의 코드는 이전과 동일)
+    ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
+    if not ae_base_df.empty:
+        ae_base_df = ae_base_df.copy()
+        ae_base_df['is_won'] = ae_base_df['Deal Stage'].isin(won_stages)
+        ae_base_df['is_lost'] = ae_base_df['Deal Stage'].isin(lost_stages)
+        
+        ae_stats = ae_base_df.groupby('Deal owner').agg(
+            Deals_Won=('is_won', 'sum'),
+            Deals_Lost=('is_lost', 'sum'),
+            Meetings_Done=('Meeting Done Date', 'count'),
+            Total_Revenue=('Amount', lambda x: x[ae_base_df.loc[x.index, 'is_won']].sum())
+        ).reset_index()
+
+        ae_stats['Win_Rate'] = (ae_stats['Deals_Won'] / (ae_stats['Deals_Won'] + ae_stats['Deals_Lost'])).fillna(0)
+        ae_stats['Conversion_Rate'] = (ae_stats['Deals_Won'] / ae_stats['Meetings_Done']).fillna(0)
+        
+        ae_stats_display = ae_stats.rename(columns={
+            'Deal owner': 'Deal Owner', 'Deals_Won': 'Deals Won', 'Deals_Lost': 'Deals Lost',
+            'Meetings_Done': 'Meetings Done', 'Total_Revenue': 'Total Revenue',
+            'Win_Rate': 'Win Rate', 'Conversion_Rate': 'Conversion (M→W)'
+        })
+        
+        st.dataframe(
+            ae_stats_display.sort_values(by='Total Revenue', ascending=False),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "Total Revenue": st.column_config.NumberColumn(format="$ %d"),
+                "Win Rate": st.column_config.ProgressColumn(format="%.2f", min_value=0, max_value=1),
+                "Conversion (M→W)": st.column_config.ProgressColumn(format="%.2f", min_value=0, max_value=1),
+            }
+        )
+    else:
+        st.info("선택된 기간에 AE 데이터가 없습니다.")
+
+    st.subheader("BDR Leaderboard")
+    bdr_base_df = base_df[base_df['BDR'].isin(BDR_NAMES)]
+    if not bdr_base_df.empty:
+        bdr_stats = bdr_base_df.groupby('BDR').agg(
+            Deals_Created=('Deal name', 'size'),
+            Meetings_Booked=('Meeting Booked Date', 'count')
+        ).reset_index()
+        bdr_stats['Conversion_Rate'] = (bdr_stats['Meetings_Booked'] / bdr_stats['Deals_Created']).fillna(0)
+        
+        bdr_stats_display = bdr_stats.rename(columns={
+            'Deals_Created': 'Deals Created', 'Meetings_Booked': 'Meetings Booked',
+            'Conversion_Rate': 'Conversion (C→B)'
+        })
+
+        st.dataframe(
+            bdr_stats_display.sort_values(by='Meetings Booked', ascending=False),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "Conversion (C→B)": st.column_config.ProgressColumn(format="%.2f", min_value=0, max_value=1),
+            }
+        )
+    else:
+        st.info("선택된 기간에 BDR 데이터가 없습니다.")
 
 with tab3:
     st.header("기회 및 리스크 관리")
-    
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("💰 Top 10 Open Deals (기회)")
@@ -214,7 +337,7 @@ with tab3:
             today = datetime.now(korea_tz)
             contract_sent_deals['Days Since Sent'] = (today - contract_sent_deals['Contract Sent Date']).dt.days
             st.dataframe(
-                contract_sent_deals[['Deal name', 'Deal owner', 'Amount', 'Days Since Sent']].style.format({'Amount': '${:,.0f}'}),
+                contract_sent_deals[['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Days Since Sent']].style.format({'Amount': '${:,.0f}'}),
                 use_container_width=True, hide_index=True
             )
         else:
