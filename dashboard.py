@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from hubspot import HubSpot
 from hubspot.crm.deals.exceptions import ApiException
 from hubspot.crm.owners.exceptions import ApiException as OwnersApiException
+import pytz
 
 # --- 페이지 설정 ---
 st.set_page_config(layout="wide", page_title="GS KR Sales Dashboard")
@@ -125,6 +126,11 @@ def load_data_from_hubspot():
     df = pd.DataFrame([deal['properties'] for deal in all_deals])
     # --- 데이터 전처리 로직 시작 ---
     if not df.empty:
+        # 0. 숫자 컬럼을 명시적으로 변환
+        # 'Amount' 컬럼에 문자열이 포함될 수 있으므로, 숫자형으로 변환합니다.
+        # errors='coerce'를 사용해 변환 불가능한 값은 NaN으로 만듭니다.
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+
         # 1. 'Deal Stage' 컬럼 매핑
         df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
 
@@ -142,10 +148,11 @@ def load_data_from_hubspot():
             'contract_signed_date', 'payment_complete_date', 'hs_expected_close_date',
             'lastmodifieddate', 'meeting_booked_date', 'meeting_done_date'
         ]
+        tz = pytz.timezone('Asia/Seoul')
         for col in date_cols:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
-                df[col] = df[col].dt.tz_convert('Asia/Seoul') # 한국 시간으로 변환
+                df[col] = df[col].dt.tz_convert(tz) # 한국 시간으로 변환
         
         # 'hs_time_in_current_stage'는 API에서 초 단위로 제공됩니다. 이를 일 단위로 변환합니다.
         if 'hs_time_in_current_stage' in df.columns:
@@ -180,16 +187,6 @@ def load_data_from_hubspot():
     df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
 
     return df
-
-# --- 시간 변환 함수 ---
-def hhmmss_to_days(time_str):
-    if pd.isna(time_str): return None
-    try:
-        # 이 함수는 API에서 가져오는 hs_time_in_current_stage (초 단위)를 처리하도록 수정해야 합니다.
-        # 현재는 이 컬럼이 이미 일 단위로 변환되어 있으므로, 이 함수는 사용되지 않습니다.
-        return time_str
-    except (ValueError, TypeError, IndexError):
-        return None
 
 # --- 대시보드 UI ---
 st.title("🎯8월_AUG_Augment, Upgrade, Grow")
@@ -551,7 +548,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
         ].sort_values('Amount', ascending=False)
         
         if not focus_deals.empty:
-            focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - today.astimezone(pd.Timestamp('now').tz_localize('Asia/Seoul'))).dt.days
+            focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - today.astimezone(pytz.timezone('Asia/Seoul'))).dt.days
             st.dataframe(focus_deals[['Deal name', 'Deal owner', 'Amount', 'Effective Close Date', 'Days to Close']].rename(columns={'Effective Close Date': 'Expected Close Date'}).style.format({'Amount': '${:,.0f}'}), use_container_width=True)
         else:
             st.info(f"향후 {focus_days}일 내에 마감될 것으로 예상되는 딜이 없습니다.")
