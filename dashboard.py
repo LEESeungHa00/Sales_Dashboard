@@ -135,7 +135,7 @@ df.rename(columns={
 }, inplace=True)
     
     # 전처리된 데이터프레임 반환
-return df
+    return df
 
 df = load_data_from_hubspot()
     
