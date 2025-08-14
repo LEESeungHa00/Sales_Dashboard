@@ -83,9 +83,9 @@ def load_data_from_hubspot():
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
         'hs_record_id': 'Record ID',
-        'bdr': 'BDR', # bdr -> BDR 로 변경
+        'bdr': 'BDR',
         'hs_lost_reason': 'Close lost reason',
-        'close_lost_reason': 'Close lost reason', # 중복될 수 있으므로 하나로 통일
+        'close_lost_reason': 'Close lost reason', 
         'dropped_reason_remark': 'Dropped Reason (Remark)',
         'contract_sent_date': 'Contract Sent Date',
         'meeting_booked_date': 'Meeting Booked Date',
@@ -101,41 +101,26 @@ def load_data_from_hubspot():
     owner_id_to_name = {}
     with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
         try:
-            # 이 API 호출을 위해 HubSpot Private App에 'crm.objects.owners.read' 스코프가 필요합니다.
             owners_response = hubspot_client.crm.owners.owners_api.get_page(archived=False)
             owners = owners_response.results
-            # Owner ID를 '이름 성' 형태의 전체 이름으로 매핑하는 딕셔너리 생성
             owner_id_to_name = {
                 owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
                 for owner in owners
             }
         except OwnersApiException as e:
-            # 권한 오류(Forbidden)가 발생하면 사용자에게 명확한 안내 메시지를 표시합니다.
             if e.status == 403:
                 st.error("HubSpot Owner 정보를 가져올 권한이 없습니다. Private App의 Scopes에 'crm.objects.owners.read'를 추가하세요.")
             else:
                 st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
-            # Owner 정보를 가져오지 못해도 대시보드는 계속 진행되도록 빈 맵을 사용합니다.
             owner_id_to_name = {}
 
 
     # Deal Owner ID를 이름으로 변환
     if 'hubspot_owner_id' in df.columns and owner_id_to_name:
         df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name)
-        # 매핑되지 않은 경우(예: 삭제된 오너)를 'Unassigned'로 처리
         df['Deal owner'].fillna('Unassigned', inplace=True)
     else:
-        # 'hubspot_owner_id' 컬럼이 없거나 owner 정보를 가져오지 못한 경우
         df['Deal owner'] = 'Unassigned'
-
-
-
-    # BDR 및 AE 담당자 딜 필터링
-    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
-
-    if df.empty:
-        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
-        return pd.DataFrame()
 
     # 실패/드랍 사유 통합 컬럼 생성
     df['Failure Reason'] = df.get('Close lost reason', pd.Series(index=df.index, dtype=object))
@@ -167,6 +152,13 @@ def load_data_from_hubspot():
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
     df['BDR'] = df.get('BDR', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
     
+    # BDR 및 AE 담당자 딜 필터링 (모든 전처리 후 마지막에 수행)
+    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
+
+    if df.empty:
+        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
+        return pd.DataFrame()
+
     return df
 
 # --- 시간 변환 함수 ---
