@@ -15,7 +15,7 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
 # --- 데이터 로딩 및 캐싱 ---
-@st.cache_data(ttl=600) # 10분마다 데이터 새로고침
+@st.cache_data(ttl=3600) # 1시간마다 데이터 새로고침
 def load_data_from_hubspot():
     """
     HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
@@ -96,8 +96,10 @@ def load_data_from_hubspot():
     df.rename(columns=rename_map, inplace=True)
     
     # HubSpot Owners API를 호출하여 Owner ID와 이름 매핑 생성
+    owner_id_to_name = {}
     with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
         try:
+            # 이 API 호출을 위해 HubSpot Private App에 'crm.objects.owners.read' 스코프가 필요합니다.
             owners_response = hubspot_client.crm.owners.owners_api.get_page(archived=False)
             owners = owners_response.results
             # Owner ID를 '이름 성' 형태의 전체 이름으로 매핑하는 딕셔너리 생성
@@ -105,9 +107,15 @@ def load_data_from_hubspot():
                 owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
                 for owner in owners
             }
-        except ApiException as e:
-            st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
-            owner_id_to_name = {} # 오류 발생 시 빈 맵으로 계속 진행
+        except OwnersApiException as e:
+            # 권한 오류(Forbidden)가 발생하면 사용자에게 명확한 안내 메시지를 표시합니다.
+            if e.status == 403:
+                 st.error("HubSpot Owner 정보를 가져올 권한이 없습니다. Private App의 Scopes에 'crm.objects.owners.read'를 추가하세요.")
+            else:
+                 st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
+            # Owner 정보를 가져오지 못해도 대시보드는 계속 진행되도록 빈 맵을 사용합니다.
+            owner_id_to_name = {}
+
 
     # Deal Owner ID를 이름으로 변환
     if 'hubspot_owner_id' in df.columns and owner_id_to_name:
