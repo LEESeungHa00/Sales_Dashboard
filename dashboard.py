@@ -41,7 +41,7 @@ DEAL_STAGE_MAPPING = {
 def load_data_from_hubspot():
     """
     HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
-    지정된 AE, BDR의 딜만 필터링합니다.
+    Deal Stage, Owner ID 등의 매핑을 적용합니다.
     """
     try:
         # Streamlit Secrets에서 HubSpot 접근 토큰 가져오기
@@ -52,6 +52,25 @@ def load_data_from_hubspot():
         return None
     except Exception as e:
         st.error(f"HubSpot 클라이언트 초기화 중 오류 발생: {e}")
+        return None
+
+    # Owner 정보 매핑을 먼저 가져옵니다.
+    owner_id_to_name = {}
+    with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
+        try:
+            owners = hubspot_client.crm.owners.owners_api.get_all()
+            owner_id_to_name = {
+                owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
+                for owner in owners.results
+            }
+        except OwnersApiException as e:
+            st.error(f"HubSpot Owners API 호출 중 오류 발생: {e}")
+            return None
+        except Exception as e:
+            st.error(f"Owner 데이터 로딩 중 예상치 못한 오류 발생: {e}")
+            return None
+    if not owner_id_to_name:
+        st.error("Owner 정보를 가져오지 못했습니다. API 권한을 확인하세요.")
         return None
 
     all_deals = []
@@ -74,152 +93,70 @@ def load_data_from_hubspot():
                 page = hubspot_client.crm.deals.basic_api.get_page(
                     limit=100,
                     after=after,
-                    properties=properties_to_fetch,
-                    archived=False
+                    properties=properties_to_fetch
                 )
-                all_deals.extend(page.results)
+                all_deals.extend([deal.to_dict() for deal in page.results])
                 if page.paging and page.paging.next:
                     after = page.paging.next.after
                 else:
                     break
         except ApiException as e:
-            st.error(f"HubSpot API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
+            st.error(f"HubSpot Deals API 호출 중 오류 발생: {e}")
             return None
-
-    if not all_deals:
-        st.warning("HubSpot에서 불러올 Deal 데이터가 없습니다.")
-        return pd.DataFrame() # 빈 데이터프레임 반환
-
-    # API 결과(deal 객체)를 딕셔너리 리스트로 변환
-    df = pd.DataFrame(all_deals)
-    # --- 데이터 전처리 ---
-
-if not df.empty:
-    # 1. 'Deal Stage' 컬럼 매핑
-    df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
-    # 컬럼 이름 변경 (API 이름 -> 대시보드에서 사용하는 이름)
-    # 컬럼 이름을 코드와 호환되도록 변경
-
-    # 2.'hubspot_owner_id'와 'BDR' 컬럼 매핑
-    # Owner ID를 이름으로 매핑하고, 매핑되지 않은 경우 'Unassigned'로 처리합니다.
-    df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name).fillna('Unassigned')
-    df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
-        
-    # 3. 날짜 컬럼 형식 통일
-    date_cols = [
-            'closedate', 'createdate', 'contract_sent_date',
-            'contract_signed_date', 'payment_complete_date', 'effective_close_date',
-            'lastmodifieddate'
-    ]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
-            df[col] = df[col].dt.tz_convert('Asia/Seoul') # 한국 시간으로 변환
-        
-    # 'hs_time_in_current_stage'는 API에서 초 단위로 제공됩니다. 이를 일 단위로 변환합니다.
-    if 'hs_time_in_current_stage' in df.columns:
-        df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (24*60*60)
-    else:
-        df['hs_time_in_current_stage'] = (datetime.now() - df['lastmodifieddate']).dt.total_seconds() / (24*60*60)
+        except Exception as e:
+            st.error(f"데이터 로딩 중 예상치 못한 오류 발생: {e}")
+            return None
     
+    df = pd.DataFrame(all_deals)
+
+    # --- 데이터 전처리 로직 시작 ---
+    if not df.empty:
+        # 1. 'Deal Stage' 컬럼 매핑
+        df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
+
+        # 2. 'hubspot_owner_id'와 'BDR' 컬럼 매핑
+        # Owner ID를 이름으로 매핑하고, 매핑되지 않은 경우 'Unassigned'로 처리합니다.
+        df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name).fillna('Unassigned')
+        df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
+
+        # 3. 날짜 컬럼 형식 통일
+        date_cols = [
+            'closedate', 'createdate', 'contract_sent_date',
+            'contract_signed_date', 'payment_complete_date', 'hs_expected_close_date',
+            'lastmodifieddate', 'meeting_booked_date', 'meeting_done_date'
+        ]
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
+                df[col] = df[col].dt.tz_convert('Asia/Seoul') # 한국 시간으로 변환
+        
+        # 'hs_time_in_current_stage'는 API에서 초 단위로 제공됩니다. 이를 일 단위로 변환합니다.
+        if 'hs_time_in_current_stage' in df.columns:
+            df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (24*60*60)
+        
     # 컬럼 이름을 기존 코드와 호환되도록 변경
-df.rename(columns={
+    df.rename(columns={
         'dealname': 'Deal name',
         'dealstage': 'Deal Stage',
         'amount': 'Amount',
         'createdate': 'Create Date',
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
-        'hubspot_owner_id': 'hubspot_owner_id',
-        'bdr': 'BDR'
-}, inplace=True)
+        'hubspot_owner_id': 'hubspot_owner_id', # hubspot_owner_id는 ID로 유지
+        'bdr': 'BDR_ID', # BDR의 원래 ID를 BDR ID로 이름 변경
+        'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)',
+        'hs_expected_close_date': 'Expected Closing Date',
+        'hs_lost_reason': 'Failure Reason',
+        'close_lost_reason': 'Close lost reason'
+    }, inplace=True)
     
-# 전처리된 데이터프레임 반환
-return df
-
-df = load_data_from_hubspot()
-    
-# 필수 컬럼 누락 시 기본 생성
-required_cols = list(rename_map.values())
-for col in required_cols:
-    if col not in df.columns:
-        df[col] = pd.NaT
-
-    # --- Deal Stage ID → Stage Label 변환 ---
-    with st.spinner("HubSpot에서 Deal Stage 정보를 불러오는 중입니다..."):
-        try:
-            pipelines = hubspot_client.crm.pipelines.pipelines_api.get_all(object_type="deals")
-            stage_map = {}
-            for pipeline in pipelines.results:
-                for stage in pipeline.stages:
-                    stage_map[stage.id] = stage.label
-            if 'Deal Stage' in df.columns:
-                df['Deal Stage'] = df['Deal Stage'].map(stage_map).fillna(df['Deal Stage'])
-        except Exception as e:
-            st.warning(f"Deal Stage 라벨 변환 실패: {e}")
-
-    
-    # HubSpot Owners API를 호출하여 Owner ID와 이름 매핑 생성
-    owner_id_to_name = {}
-    with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
-        try:
-            owners_response = hubspot_client.crm.owners.owners_api.get_page(archived=False)
-            owners = owners_response.results
-            owner_id_to_name = {
-                owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
-                for owner in owners
-            }
-        except OwnersApiException as e:
-            if e.status == 403:
-                st.error("HubSpot Owner 정보를 가져올 권한이 없습니다. Private App의 Scopes에 'crm.objects.owners.read'를 추가하세요.")
-            else:
-                st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
-            owner_id_to_name = {}
-
-
-    # Deal Owner ID를 이름으로 변환
-    if 'hubspot_owner_id' in df.columns and owner_id_to_name:
-        df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name)
-        df['Deal owner'].fillna('Unassigned', inplace=True)
-    else:
-        df['Deal owner'] = 'Unassigned'
-
-    # 실패/드랍 사유 통합 컬럼 생성
-    df['Failure Reason'] = df.get('Close lost reason', pd.Series(index=df.index, dtype=object))
-    if 'Dropped Reason (Remark)' in df.columns:
-        dropped_mask = df['Deal Stage'] == 'Dropped'
-        df.loc[dropped_mask, 'Failure Reason'] = df.loc[dropped_mask, 'Dropped Reason (Remark)']
-
-    # 날짜 컬럼 변환
-    date_cols = [
-        'Create Date', 'Close Date', 'Contract Sent Date', 'Last Modified Date',
-        'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date',
-        'Expected Closing Date'
-    ]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce').dt.tz_localize(None)
-
     # 'Effective Close Date' 생성
-    if 'Expected Closing Date' in df.columns:
+    if 'Expected Closing Date' in df.columns and 'Close Date' in df.columns:
         df['Effective Close Date'] = df['Expected Closing Date'].fillna(df['Close Date'])
     elif 'Close Date' in df.columns:
         df['Effective Close Date'] = df['Close Date']
     else:
         df['Effective Close Date'] = pd.NaT
-
-
-    # 숫자 및 기타 컬럼 처리
-    if 'Amount' in df.columns:
-        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
-    df['BDR'] = df.get('BDR', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
-    
-    # BDR 및 AE 담당자 딜 필터링 (모든 전처리 후 마지막에 수행)
-    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
-
-    if df.empty:
-        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
-        return pd.DataFrame()
 
     return df
 
@@ -227,9 +164,9 @@ for col in required_cols:
 def hhmmss_to_days(time_str):
     if pd.isna(time_str): return None
     try:
-        # HubSpot의 hs_time_in_current_stage는 밀리초(ms) 단위일 수 있음
-        total_seconds = int(time_str) / 1000
-        return total_seconds / (24 * 3600)
+        # 이 함수는 API에서 가져오는 hs_time_in_current_stage (초 단위)를 처리하도록 수정해야 합니다.
+        # 현재는 이 컬럼이 이미 일 단위로 변환되어 있으므로, 이 함수는 사용되지 않습니다.
+        return time_str
     except (ValueError, TypeError, IndexError):
         return None
 
@@ -253,7 +190,7 @@ with st.sidebar:
         # 📥 허브스팟 원본 데이터 CSV 다운로드 버튼
         csv_data = df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="📥 허브스팟 원본 데이터 다운로드",
+            label="� 허브스팟 원본 데이터 다운로드",
             data=csv_data,
             file_name=f"hubspot_deals_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -350,7 +287,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 'Meeting Booked': "Meeting Booked Date",
                 'Meeting Done': "Meeting Done Date",
                 'Contract Sent': "Contract Sent Date",
-                'Closed Won': "Close Date" 
+                'Closed Won': "Close Date"  
             }
             funnel_data = []
             
@@ -652,7 +589,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
         stale_col = 'Time in current stage (HH:mm:ss)'
         if stale_col in open_deals_base.columns:
             open_deals_stale = open_deals_base.copy()
-            open_deals_stale['Days in Stage'] = open_deals_stale[stale_col].apply(hhmmss_to_days)
+            open_deals_stale['Days in Stage'] = open_deals_stale[stale_col]
             
             stale_deals_df = open_deals_stale[open_deals_stale['Days in Stage'] > stale_threshold]
 
@@ -662,7 +599,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
             else:
                 st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
         else:
-            st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'{stale_col}'** 속성을 포함하여 Export해야 합니다.")
+            st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'hs_time_in_current_stage'** 속성을 포함하여 가져와야 합니다.")
 
 
     # --- Tab 4: 실패/드랍 분석 ---
@@ -686,3 +623,4 @@ if 'date_range' in locals() and df is not None and not df.empty:
             )
         else:
             st.info("'Closed Lost' 또는 'Dropped' 상태의 딜이 없습니다.")
+
