@@ -83,7 +83,7 @@ def load_data_from_hubspot():
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
         'hs_record_id': 'Record ID',
-        'bdr': 'BDR',
+        'bdr': 'BDR', # bdr -> BDR 로 변경
         'hs_lost_reason': 'Close lost reason',
         'close_lost_reason': 'Close lost reason', # 중복될 수 있으므로 하나로 통일
         'dropped_reason_remark': 'Dropped Reason (Remark)',
@@ -596,7 +596,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
                 st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True)
             else:
-                st.success(f"모든 딜이 최신 상태로 업데이트되어 관리되고 있습니다. 👍")
+                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
         else:
             st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'{stale_col}'** 속성을 포함하여 Export해야 합니다.")
 
