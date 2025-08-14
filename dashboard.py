@@ -20,6 +20,7 @@ ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 def load_data_from_hubspot():
     """
     HubSpot API를 통해 Deals 데이터를 불러오고 전처리합니다.
+    지정된 AE, BDR의 딜만 필터링합니다.
     """
     try:
         # Streamlit Secrets에서 HubSpot 접근 토큰 가져오기
@@ -38,11 +39,11 @@ def load_data_from_hubspot():
     # 대시보드에 필요한 모든 속성 정의
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
-        "lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
+        "lastmodifieddate", "deal_owner_id", "bdr", "hs_lost_reason",
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
-        "payment_complete_date", "hs_expected_close_date", 
-        "hs_time_in_current_stage"
+        "payment_complete_date", "hs_expected_amount", "hs_is_closed_won",
+        "hs_is_closed", "hubspot_owner_id", "hs_time_in_current_stage"
     ]
 
     # 페이지네이션을 통해 모든 Deal 데이터 가져오기
@@ -69,7 +70,7 @@ def load_data_from_hubspot():
         return pd.DataFrame() # 빈 데이터프레임 반환
 
     # API 결과(deal 객체)를 딕셔너리 리스트로 변환
-    deals_list = [{'id': deal.id, **deal.to_dict()['properties']} for deal in all_deals]
+    deals_list = [deal.to_dict()['properties'] for deal in all_deals]
     df = pd.DataFrame(deals_list)
 
     # --- 데이터 전처리 ---
@@ -80,7 +81,8 @@ def load_data_from_hubspot():
         'createdate': 'Create Date',
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
-        'id': 'Record ID',
+        'hs_record_id': 'Record ID',
+        'hubspot_owner_id': 'Deal owner', # Deal Owner 이름은 별도 처리 필요
         'hs_lost_reason': 'hs_lost_reason',
         'close_lost_reason': 'Close Lost Reason',
         'dropped_reason_remark': 'Dropped Reason (Remark)',
@@ -89,7 +91,7 @@ def load_data_from_hubspot():
         'meeting_done_date': 'Meeting Done Date',
         'contract_signed_date': 'Contract Signed Date',
         'payment_complete_date': 'Payment Complete Date',
-        'hs_expected_close_date': 'Expected Closing Date',
+        'hs_expected_amount': 'Expected Closing Date', # 이 부분은 확인 필요
         'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)'
     }
     df.rename(columns=rename_map, inplace=True)
@@ -125,6 +127,15 @@ def load_data_from_hubspot():
         # 'hubspot_owner_id' 컬럼이 없거나 owner 정보를 가져오지 못한 경우
         df['Deal owner'] = 'Unassigned'
 
+
+
+    # BDR 및 AE 담당자 딜 필터링
+    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
+
+    if df.empty:
+        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
+        return pd.DataFrame()
+
     # 실패/드랍 사유 통합 컬럼 생성
     df['Failure Reason'] = df.get('hs_lost_reason', pd.Series(index=df.index, dtype=object))
     if 'Close Lost Reason' in df.columns:
@@ -153,9 +164,11 @@ def load_data_from_hubspot():
 
 
     # 숫자 및 기타 컬럼 처리
-    if 'amount' in df.columns:
-        df['Amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-    df['BDR'] = df.get('bdr', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
+    if 'Amount' in df.columns:
+        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+    df['BDR'] = df.get('BDR', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
+    df['Deal owner'] = df.get('Deal owner', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
+    df['Deal Stage'] = df.get('Deal Stage', pd.Series(index=df.index, dtype=object)).fillna('Unknown Stage')
     
     return df
 
@@ -222,16 +235,6 @@ with st.sidebar:
 if 'date_range' in locals() and df is not None and not df.empty:
     start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
     
-    # BDR 및 AE 담당자 딜 필터링 (데이터 로딩 후 필터링)
-    unfiltered_df = df.copy() # 디버깅용 원본
-    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
-    if df.empty:
-        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
-        st.subheader("API 원본 데이터 확인 (디버깅용)")
-        st.info("아래 표의 'Deal owner'와 'BDR' 컬럼에 있는 이름이 코드의 담당자 리스트와 정확히 일치하는지 확인해주세요.")
-        st.dataframe(unfiltered_df[['Deal name', 'Deal owner', 'BDR']])
-        st.stop()
-
     base_df = df[(df[filter_col] >= start_date) & (df[filter_col] <= end_date)].copy()
     
     if base_df.empty:
