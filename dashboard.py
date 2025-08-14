@@ -15,30 +15,36 @@ st.set_page_config(layout="wide", page_title="GS KR Sales Dashboard")
 BDR_NAMES = ['Sohee (Blair) Kim', 'Soorim Yu', 'Gyeol Jang', 'Minyoung Kim']
 AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park', 'Haran Bae']
 
-# --- Deal Stage 수동 매핑 (가장 안정적인 방식) ---
+# --- Deal Stage 수동 매핑 (최종본) ---
 DEAL_STAGE_MAPPING = {
-    '109960046': 'Prospecting', '108877850': 'Proposal Submitted', 'qualifiedtobuy': 'Qualified To Buy',
-    'decisionmakerboughtin': 'Decision Maker Bought-In', 'closedwon': 'Closed Won', 'closedlost': 'Closed Lost',
-    '108159780': 'Closing', '129259600': 'Follow Up', '998897767': 'Follow Up',
-    'appointmentscheduled': 'Appointment Scheduled', '998897766': 'Qualified', '108159779': 'Negotiation',
-    '998897768': 'Follow Up', '1079056027': 'Lost', 'unassigned': 'Unassigned',
-    'qualified': 'Qualified', 'prospecting': 'Prospecting'
+    # PM님이 수정해주신 최종 단계 반영
+    'qualifiedtobuy': 'Meeting Booked',
+    'decisionmakerboughtin': 'Meeting Done',
+    'appointmentscheduled': 'New',
+    '998897766': 'Initial Contact',
+    '129259600': 'Price Negotiation',
+    '116839313': 'Contract Draft',
+    '108159779': 'Contract Sent',
+    '108159780': 'Contract Signed',
+    '108877850': 'Payment Complete',
+    '109960046': 'Dropped',
+    '1105439053': 'Cancel',
+
+    # 'closedwon' ID는 'Closed Won'으로 최종 처리 (Proposal Sent & Service Validation 포함)
+    'closedwon': 'Closed Won',
+    'closedlost': 'Closed Lost',
 }
 
 # --- 데이터 로딩 및 전처리 ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data_from_hubspot():
-    """
-    HubSpot API의 Pagination을 수동으로 처리하여 모든 Deal 데이터를 안정적으로 가져옵니다.
-    """
     try:
         access_token = st.secrets["HUBSPOT_ACCESS_TOKEN"]
         hubspot_client = HubSpot(access_token=access_token)
     except KeyError:
         st.error("HubSpot 접근 토큰이 설정되지 않았습니다. Streamlit Cloud의 Secrets 설정을 확인하세요.")
         return None
-    
-    # 1. Owner 정보 로딩
+
     with st.spinner("1/2: Owner 정보 로딩..."):
         try:
             all_owners = hubspot_client.crm.owners.get_all()
@@ -47,7 +53,6 @@ def load_data_from_hubspot():
             st.error(f"Owner 정보 로딩 실패. API 권한(crm.objects.owners.read)을 확인하세요. 오류: {e.body}")
             return None
 
-    # 2. 핵심 Deal 속성만 지정하여 데이터 로딩
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", "hs_lastmodifieddate",
         "hubspot_owner_id", "bdr", "hs_lost_reason", "contract_sent_date", "meeting_booked_date",
@@ -55,25 +60,16 @@ def load_data_from_hubspot():
         "hs_expected_close_date", "hs_time_in_current_stage"
     ]
     
-    # 📌 수동 페이지네이션 로직 (핵심 개선 사항)
     all_deals = []
     after = None
-    with st.spinner("2/2: 모든 Deal 데이터를 페이지별로 로딩 중... (데이터 양에 따라 시간이 소요될 수 있습니다)"):
+    with st.spinner("2/2: 모든 Deal 데이터를 페이지별로 로딩 중..."):
         while True:
             try:
-                page = hubspot_client.crm.deals.basic_api.get_page(
-                    limit=100,
-                    after=after,
-                    properties=properties_to_fetch,
-                    archived=False
-                )
+                page = hubspot_client.crm.deals.basic_api.get_page(limit=100, after=after, properties=properties_to_fetch, archived=False)
                 all_deals.extend(page.results)
-                
-                # 다음 페이지가 있는지 확인
                 if page.paging and page.paging.next:
                     after = page.paging.next.after
                 else:
-                    # 다음 페이지가 없으면 루프 종료
                     break
             except ApiException as e:
                 st.error(f"Deal 데이터 로딩 중 API 오류 발생. API 권한(crm.objects.deals.read)을 확인하세요. 오류: {e.body}")
@@ -84,14 +80,13 @@ def load_data_from_hubspot():
 
     df = pd.DataFrame([deal.to_dict()['properties'] for deal in all_deals])
 
-    # 데이터 전처리
     if not df.empty:
         for col in properties_to_fetch:
             if col not in df.columns:
                 df[col] = pd.NaT if 'date' in col else None
         
         rename_map = {
-            'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
+            'dealname': 'Deal name', 'dealstage': 'Deal Stage ID', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
             'hs_time_in_current_stage': 'Days in Stage', 'hs_expected_close_date': 'Expected Closing Date',
             'hs_lost_reason': 'Failure Reason', 'contract_sent_date': 'Contract Sent Date',
@@ -102,7 +97,7 @@ def load_data_from_hubspot():
         df.rename(columns=rename_map, inplace=True)
 
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
-        df['Deal Stage'] = df['Deal Stage'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['Deal Stage'])
+        df['Deal Stage'] = df['Deal Stage ID'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['Deal Stage ID'])
         df['Deal owner'] = df['Deal owner'].astype(str).map(owner_id_to_name).fillna('Unassigned')
         df['BDR'] = df['BDR'].astype(str).map(owner_id_to_name).fillna('Unassigned')
 
@@ -158,7 +153,7 @@ if base_df.empty:
 
 # --- 메인 대시보드 ---
 won_stages = ['Closed Won', 'Contract Signed', 'Payment Complete']
-lost_stages = ['Closed Lost', 'Dropped', 'Lost']
+lost_stages = ['Closed Lost', 'Dropped', 'Cancel']
 open_stages = [stage for stage in base_df['Deal Stage'].unique() if stage not in won_stages + lost_stages]
 
 tab1, tab2, tab3, tab4 = st.tabs(["🚀 통합 대시보드", "🧑‍💻 담당자별 상세 분석", "⚠️ 기회 & 리스크 관리", "📉 실패/드랍 분석"])
@@ -172,7 +167,6 @@ with tab1:
     num_lost_deals = len(lost_deals_total)
     win_rate = num_won_deals / (num_won_deals + num_lost_deals) if (num_won_deals + num_lost_deals) > 0 else 0
     avg_deal_value = total_revenue / num_won_deals if num_won_deals > 0 else 0
-    
     avg_sales_cycle = pd.NA
     if not won_deals_total.empty and 'Create Date' in won_deals_total.columns and 'Close Date' in won_deals_total.columns:
         valid_cycle_deals = won_deals_total.dropna(subset=['Create Date', 'Close Date'])
@@ -191,11 +185,11 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**단계별 전환율 (Funnel)**")
-        funnel_stages_map = {'Meeting Booked': 'Meeting Booked Date', 'Meeting Done': 'Meeting Done Date', 'Contract Sent': 'Contract Sent Date', 'Closed Won': 'Close Date'}
+        funnel_stages_map = {'Meeting Booked': 'Meeting Booked Date', 'Meeting Done': 'Meeting Done Date', 'Contract Sent': 'Contract Sent Date', 'Contract Signed': 'Contract Signed Date', 'Payment Complete': 'Payment Complete Date'}
         funnel_data = [{'Stage': 'Total Deals', 'Count': len(base_df)}]
         for stage, date_col in funnel_stages_map.items():
             if date_col in base_df.columns:
-                count = base_df[base_df['Deal Stage'].isin(won_stages)][date_col].notna().sum() if stage == 'Closed Won' else base_df[date_col].notna().sum()
+                count = base_df[date_col].notna().sum()
                 funnel_data.append({'Stage': stage, 'Count': count})
         if len(funnel_data) > 1:
             st.plotly_chart(go.Figure(go.Funnel(y=[d['Stage'] for d in funnel_data], x=[d['Count'] for d in funnel_data], textposition="inside", textinfo="value+percent previous")), use_container_width=True)
@@ -210,12 +204,13 @@ with tab1:
             {'label': 'Create → M.Booked', 'start': 'Create Date', 'end': 'Meeting Booked Date'},
             {'label': 'M.Booked → M.Done', 'start': 'Meeting Booked Date', 'end': 'Meeting Done Date'},
             {'label': 'M.Done → C.Sent', 'start': 'Meeting Done Date', 'end': 'Contract Sent Date'},
-            {'label': 'C.Sent → Deal Won', 'start': 'Contract Sent Date', 'end': 'Deal Won Date'}
+            {'label': 'C.Sent → C.Signed', 'start': 'Contract Sent Date', 'end': 'Contract Signed Date'},
+            {'label': 'C.Signed → P.Complete', 'start': 'Contract Signed Date', 'end': 'Payment Complete Date'}
         ]
         avg_times = []
         for transition in stage_transitions:
             start_col, end_col = transition['start'], transition['end']
-            df_to_use = temp_df if end_col == 'Deal Won Date' else base_df
+            df_to_use = temp_df
             if start_col in df_to_use.columns and end_col in df_to_use.columns:
                 valid_deals = df_to_use.dropna(subset=[start_col, end_col])
                 if not valid_deals.empty:
