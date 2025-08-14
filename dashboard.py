@@ -39,7 +39,7 @@ def load_data_from_hubspot():
     # 대시보드에 필요한 모든 속성 정의
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
-        "lastmodifieddate", "deal_owner_id", "bdr", "hs_lost_reason",
+        "lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
         "payment_complete_date", "hs_expected_close_date", 
@@ -78,14 +78,14 @@ def load_data_from_hubspot():
     rename_map = {
         'dealname': 'Deal name',
         'dealstage': 'Deal Stage',
+        'amount': 'Amount',
         'createdate': 'Create Date',
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
         'hs_record_id': 'Record ID',
-        'hubspot_owner_id': 'hubspot_owner_id', # Keep original for mapping
-        'bdr': 'BDR', # bdr -> BDR 로 변경
-        'hs_lost_reason': 'hs_lost_reason',
-        'close_lost_reason': 'Close Lost Reason',
+        'bdr': 'BDR',
+        'hs_lost_reason': 'Close lost reason',
+        'close_lost_reason': 'Close lost reason', # 중복될 수 있으므로 하나로 통일
         'dropped_reason_remark': 'Dropped Reason (Remark)',
         'contract_sent_date': 'Contract Sent Date',
         'meeting_booked_date': 'Meeting Booked Date',
@@ -138,9 +138,7 @@ def load_data_from_hubspot():
         return pd.DataFrame()
 
     # 실패/드랍 사유 통합 컬럼 생성
-    df['Failure Reason'] = df.get('hs_lost_reason', pd.Series(index=df.index, dtype=object))
-    if 'Close Lost Reason' in df.columns:
-        df['Failure Reason'].fillna(df['Close Lost Reason'], inplace=True)
+    df['Failure Reason'] = df.get('Close lost reason', pd.Series(index=df.index, dtype=object))
     if 'Dropped Reason (Remark)' in df.columns:
         dropped_mask = df['Deal Stage'] == 'Dropped'
         df.loc[dropped_mask, 'Failure Reason'] = df.loc[dropped_mask, 'Dropped Reason (Remark)']
@@ -165,8 +163,8 @@ def load_data_from_hubspot():
 
 
     # 숫자 및 기타 컬럼 처리
-    if 'amount' in df.columns:
-        df['Amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+    if 'Amount' in df.columns:
+        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
     df['BDR'] = df.get('BDR', pd.Series(index=df.index, dtype=object)).fillna('Unassigned')
     
     return df
@@ -598,7 +596,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
                 st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True)
             else:
-                st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
+                st.success(f"모든 딜이 최신 상태로 업데이트되어 관리되고 있습니다. 👍")
         else:
             st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'{stale_col}'** 속성을 포함하여 Export해야 합니다.")
 
