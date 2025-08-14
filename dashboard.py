@@ -139,11 +139,11 @@ return df
 
 df = load_data_from_hubspot()
     
-    # 필수 컬럼 누락 시 기본 생성
-    required_cols = list(rename_map.values())
-    for col in required_cols:
-        if col not in df.columns:
-            df[col] = pd.NaT
+# 필수 컬럼 누락 시 기본 생성
+required_cols = list(rename_map.values())
+for col in required_cols:
+    if col not in df.columns:
+        df[col] = pd.NaT
 
     # --- Deal Stage ID → Stage Label 변환 ---
     with st.spinner("HubSpot에서 Deal Stage 정보를 불러오는 중입니다..."):
