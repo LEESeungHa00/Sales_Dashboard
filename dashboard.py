@@ -45,7 +45,6 @@ def load_data_from_hubspot():
     Deal Stage, Owner ID 등의 매핑을 적용하고, 우리 팀의 Deal만 필터링합니다.
     """
     try:
-        # Streamlit Secrets에서 HubSpot 접근 토큰을 안전하게 불러옵니다.
         access_token = st.secrets["HUBSPOT_ACCESS_TOKEN"]
         hubspot_client = HubSpot(access_token=access_token)
     except KeyError:
@@ -55,11 +54,9 @@ def load_data_from_hubspot():
         st.error(f"HubSpot 클라이언트 초기화 중 오류 발생: {e}")
         return None
 
-    # HubSpot의 모든 Owner 정보를 가져와 ID와 이름 매핑 (API 호출 최소화를 위해 캐시 활용)
     owner_id_to_name = {}
     with st.spinner("HubSpot에서 Owner 정보를 불러오는 중입니다..."):
         try:
-            # hubspot-api-client v8 이상에서는 get_all() 메서드를 지원합니다.
             all_owners = hubspot_client.crm.owners.get_all()
             owner_id_to_name = {
                 owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip()
@@ -76,20 +73,18 @@ def load_data_from_hubspot():
         st.error("Owner 정보를 가져오지 못했습니다. API 권한을 확인하세요.")
         return None
 
-    # HubSpot에서 가져올 Deal 속성 목록 정의
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate",
         "lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
         "payment_complete_date", "hs_expected_close_date",
-        "hs_time_in_current_stage" # 현재 스테이지 체류 시간
+        "hs_time_in_current_stage"
     ]
 
     all_deals = []
-    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (데이터 양에 따라 시간이 소요될 수 있습니다)"):
+    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다..."):
         try:
-            # 모든 Deal 데이터를 페이지네이션을 통해 가져오기
             all_deals_from_api = hubspot_client.crm.deals.get_all(properties=properties_to_fetch)
             all_deals = [deal.to_dict() for deal in all_deals_from_api]
         except ApiException as e:
@@ -103,24 +98,19 @@ def load_data_from_hubspot():
         st.warning("HubSpot에서 불러올 Deal 데이터가 없습니다.")
         return pd.DataFrame()
         
-    # API 응답 구조에 맞게 properties 데이터만 추출하여 DataFrame 생성
     df = pd.DataFrame([deal['properties'] for deal in all_deals])
 
     if not df.empty:
-        # API 응답에 특정 속성이 없을 경우를 대비해 컬럼을 미리 만들어줌
         for col in properties_to_fetch:
             if col not in df.columns:
                 df[col] = pd.NaT if 'date' in col else None
         
-        # 데이터 타입 변환 및 정리
         df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
         df['dealstage'] = df['dealstage'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
 
-        # Owner ID를 실제 이름으로 매핑
         df['Deal owner'] = df['hubspot_owner_id'].astype(str).map(owner_id_to_name).fillna('Unassigned')
         df['BDR'] = df['bdr'].astype(str).map(owner_id_to_name).fillna('Unassigned')
 
-        # 날짜 컬럼들을 한국 시간(Asia/Seoul)으로 변환
         date_cols = [
             'closedate', 'createdate', 'contract_sent_date', 'contract_signed_date', 
             'payment_complete_date', 'hs_expected_close_date', 'lastmodifieddate', 
@@ -128,14 +118,13 @@ def load_data_from_hubspot():
         ]
         korea_tz = pytz.timezone('Asia/Seoul')
         for col in date_cols:
-            df[col] = pd.to_datetime(df[col], errors='coerce').dt.tz_convert(korea_tz)
+            if col in df.columns:
+                # 📌 오류 수정: 날짜를 UTC 기준으로 인식(localize)한 후, 서울 시간으로 변환(convert)
+                df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
         
-        # 📌 개선점 1: '현재 단계 체류 시간'을 밀리초에서 일(day)로 정확하게 변환
         if 'hs_time_in_current_stage' in df.columns:
-            # 밀리초(ms)를 일(days)로 변환 (1000 * 60 * 60 * 24)
             df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (86400000)
         
-        # 컬럼 이름 변경 (사용자 친화적으로)
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'lastmodifieddate': 'Last Modified Date',
@@ -148,10 +137,8 @@ def load_data_from_hubspot():
         }
         df.rename(columns=rename_map, inplace=True)
         
-        # 'Effective Close Date' 생성: Open Deal은 예상 마감일, Closed Deal은 실제 마감일 사용
         df['Effective Close Date'] = df['Close Date'].fillna(df['Expected Closing Date'])
 
-        # 📌 핵심 로직: 우리 팀(BDR 또는 AE)에 해당하는 Deal만 필터링
         df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
 
     return df
@@ -174,7 +161,6 @@ with st.sidebar:
     st.header("⚙️ 설정")
     st.success(f"데이터 로딩 완료! (총 {len(df)}개 Deal)")
     
-    # CSV 다운로드 버튼
     csv_data = df.to_csv(index=False, encoding='utf-8-sig')
     st.download_button(
         label="📥 HubSpot DEAL LIST 다운로드",
@@ -186,11 +172,10 @@ with st.sidebar:
     sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD)", min_value=0, value=500000, step=10000)
     st.markdown("---")
     
-    # 날짜 필터
     filter_type = st.radio(
         "**날짜 필터 기준 선택**",
         ('생성일 기준 (Create Date)', '마감일 기준 (Effective Close Date)', '최종 수정일 기준 (Last Modified Date)'),
-        help="**생성일 기준:** 특정 기간에 생성된 딜 분석\n\n**마감일 기준:** 특정 기간에 마감되었거나 마감될 딜 분석 (Open 딜은 Expected Closing Date 기준)\n\n**최종 수정일 기준:** 특정 기간에 업데이트된 딜 분석"
+        help="**생성일 기준:** 특정 기간에 생성된 딜 분석\n\n**마감일 기준:** 특정 기간에 마감되었거나 마감될 딜 분석\n\n**최종 수정일 기준:** 특정 기간에 업데이트된 딜 분석"
     )
 
     filter_col_map = {
@@ -200,7 +185,6 @@ with st.sidebar:
     }
     filter_col = filter_col_map[filter_type]
 
-    # 해당 필터 컬럼에 유효한 날짜 데이터가 있는지 확인
     if df[filter_col].notna().any():
         min_date = df[filter_col].min().date()
         max_date = df[filter_col].max().date()
@@ -219,7 +203,7 @@ korea_tz = pytz.timezone('Asia/Seoul')
 start_date = korea_tz.localize(datetime.combine(date_range[0], datetime.min.time()))
 end_date = korea_tz.localize(datetime.combine(date_range[1], datetime.max.time()))
 
-base_df = df[(df[filter_col] >= start_date) & (df[filter_col] <= end_date)].copy()
+base_df = df[(df[filter_col].notna()) & (df[filter_col] >= start_date) & (df[filter_col] <= end_date)].copy()
 
 if base_df.empty:
     st.warning("선택된 기간 및 조건에 해당하는 데이터가 없습니다.")
@@ -244,15 +228,14 @@ with tab1:
     num_won_deals = len(won_deals_total)
     num_lost_deals = len(lost_deals_total)
     
-    # 📌 개선점 2: 분모가 0일 때를 더 안전하고 간결하게 처리
     win_rate = num_won_deals / (num_won_deals + num_lost_deals) if (num_won_deals + num_lost_deals) > 0 else 0
     avg_deal_value = total_revenue / num_won_deals if num_won_deals > 0 else 0
 
-    # 평균 영업 사이클 계산 (날짜 데이터가 있을 경우에만)
     if not won_deals_total.empty and 'Close Date' in won_deals_total.columns and 'Create Date' in won_deals_total.columns:
-        won_deals_total = won_deals_total.copy() # SettingWithCopyWarning 방지
-        won_deals_total['Sales Cycle'] = (won_deals_total['Close Date'] - won_deals_total['Create Date']).dt.days
-        avg_sales_cycle = won_deals_total['Sales Cycle'][won_deals_total['Sales Cycle'] >= 0].mean()
+        valid_cycle_deals = won_deals_total.dropna(subset=['Close Date', 'Create Date'])
+        valid_cycle_deals = valid_cycle_deals.copy()
+        valid_cycle_deals['Sales Cycle'] = (valid_cycle_deals['Close Date'] - valid_cycle_deals['Create Date']).dt.days
+        avg_sales_cycle = valid_cycle_deals['Sales Cycle'][valid_cycle_deals['Sales Cycle'] >= 0].mean()
     else:
         avg_sales_cycle = 0
 
@@ -268,7 +251,6 @@ with tab1:
     col1, col2 = st.columns([1,1])
     with col1:
         st.markdown("**단계별 전환율 (Funnel)**")
-        # Funnel 차트를 위한 데이터 정의
         funnel_stages_map = {
             'Meeting Booked': 'Meeting Booked Date',
             'Meeting Done': 'Meeting Done Date',
@@ -276,7 +258,6 @@ with tab1:
             'Closed Won': 'Close Date'  
         }
         funnel_data = []
-        # Funnel의 첫 단계는 모든 딜로 시작
         initial_count = len(base_df)
         funnel_data.append({'Stage': 'Total Deals', 'Count': initial_count})
 
@@ -297,14 +278,12 @@ with tab1:
             
     with col2:
         st.markdown("**단계별 평균 소요 시간 (일)**")
-        # 단계별 소요 시간 계산을 위한 로직
-        # ... (이전 코드와 동일, 'Deal Won Date' 생성 등)
         temp_df = base_df.copy()
         date_cols_for_won = ['Close Date', 'Contract Signed Date', 'Payment Complete Date']
         existing_won_date_cols = [col for col in date_cols_for_won if col in temp_df.columns and temp_df[col].notna().any()]
         
         if existing_won_date_cols:
-            temp_df['Deal Won Date'] = temp_df[existing_won_date_cols].min(axis=1)
+            temp_df['Deal Won Date'] = temp_df[existing_won_date_cols].min(axis=1, skipna=True)
 
         stage_transitions = [
             {'label': 'Create → Meeting Booked', 'start': 'Create Date', 'end': 'Meeting Booked Date'},
@@ -341,31 +320,28 @@ with tab2:
     
     if selected_pic == 'All':
         st.header("팀 전체 담당자별 성과 비교")
-        filtered_df = base_df
+        display_df = base_df
     else:
         st.header(f"'{selected_pic}' 상세 분석")
         if selected_pic in AE_NAMES:
-            filtered_df = base_df[base_df['Deal owner'] == selected_pic]
+            display_df = base_df[base_df['Deal owner'] == selected_pic]
         elif selected_pic in BDR_NAMES:
-            filtered_df = base_df[base_df['BDR'] == selected_pic]
+            display_df = base_df[base_df['BDR'] == selected_pic]
 
-    if filtered_df.empty:
-        st.info("해당 담당자의 데이터가 없습니다.")
+    if display_df.empty:
+        st.info("선택된 조건에 해당하는 담당자의 데이터가 없습니다.")
         st.stop()
     
-    # 'All' 또는 AE 담당자 선택 시 AE 리더보드 표시
     if selected_pic == 'All' or selected_pic in AE_NAMES:
         st.subheader("AE Leaderboard")
-        ae_base_df = filtered_df if selected_pic == 'All' else base_df[base_df['Deal owner'].isin(AE_NAMES)]
+        ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
         if not ae_base_df.empty:
             ae_stats = ae_base_df.groupby('Deal owner').apply(lambda x: pd.Series({
                 'Deals Won': (x['Deal Stage'].isin(won_stages)).sum(),
                 'Deals Lost': (x['Deal Stage'].isin(lost_stages)).sum(),
-                'Meetings Done': x['Meeting Done Date'].notna().sum() if 'Meeting Done Date' in x else 0,
+                'Meetings Done': x['Meeting Done Date'].notna().sum(),
                 'Total Revenue': x.loc[x['Deal Stage'].isin(won_stages), 'Amount'].sum(),
             })).reset_index()
-
-            # 📌 개선점 2: 승률 및 전환율 계산 안정화
             ae_stats['Win Rate'] = (ae_stats['Deals Won'] / (ae_stats['Deals Won'] + ae_stats['Deals Lost'])).fillna(0)
             ae_stats['Conversion (Meeting→Won)'] = (ae_stats['Deals Won'] / ae_stats['Meetings Done']).fillna(0)
             
@@ -377,16 +353,14 @@ with tab2:
         else:
             st.info("선택된 조건에 AE 데이터가 없습니다.")
 
-    # 'All' 또는 BDR 담당자 선택 시 BDR 리더보드 표시
     if selected_pic == 'All' or selected_pic in BDR_NAMES:
         st.subheader("BDR Leaderboard")
-        bdr_base_df = filtered_df if selected_pic == 'All' else base_df[base_df['BDR'].isin(BDR_NAMES)]
+        bdr_base_df = base_df[base_df['BDR'].isin(BDR_NAMES)]
         if not bdr_base_df.empty:
             bdr_stats = bdr_base_df.groupby('BDR').apply(lambda x: pd.Series({
                 'Deals Created': len(x),
-                'Meetings Booked': x['Meeting Booked Date'].notna().sum() if 'Meeting Booked Date' in x else 0,
+                'Meetings Booked': x['Meeting Booked Date'].notna().sum(),
             })).reset_index()
-
             bdr_stats['Conversion (Create→Booked)'] = (bdr_stats['Meetings Booked'] / bdr_stats['Deals Created']).fillna(0)
             
             st.dataframe(bdr_stats.sort_values(by='Meetings Booked', ascending=False).style.format({
@@ -430,7 +404,7 @@ with tab4:
 
     if not lost_dropped_deals.empty:
         st.subheader("실패/드랍 사유 분석")
-        reason_col = 'Failure Reason' # 또는 'Close lost reason' 등
+        reason_col = 'Failure Reason'
         if reason_col in lost_dropped_deals.columns and lost_dropped_deals[reason_col].notna().any():
             reason_counts = lost_dropped_deals[reason_col].value_counts().reset_index()
             reason_counts.columns = ['Reason', 'Count']
