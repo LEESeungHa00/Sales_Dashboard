@@ -110,12 +110,11 @@ def load_data_from_hubspot():
         except OwnersApiException as e:
             # 권한 오류(Forbidden)가 발생하면 사용자에게 명확한 안내 메시지를 표시합니다.
             if e.status == 403:
-                 st.error("HubSpot Owner 정보를 가져올 권한이 없습니다. Private App의 Scopes에 'crm.objects.owners.read'를 추가하세요.")
+                st.error("HubSpot Owner 정보를 가져올 권한이 없습니다. Private App의 Scopes에 'crm.objects.owners.read'를 추가하세요.")
             else:
-                 st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
+                st.error(f"HubSpot Owners API에서 데이터를 가져오는 중 오류가 발생했습니다: {e.reason}")
             # Owner 정보를 가져오지 못해도 대시보드는 계속 진행되도록 빈 맵을 사용합니다.
             owner_id_to_name = {}
-
 
     # Deal Owner ID를 이름으로 변환
     if 'hubspot_owner_id' in df.columns and owner_id_to_name:
@@ -125,22 +124,7 @@ def load_data_from_hubspot():
     else:
         # 'hubspot_owner_id' 컬럼이 없거나 owner 정보를 가져오지 못한 경우
         df['Deal owner'] = 'Unassigned'
-        
-    # *** FIX: 필터링 전에 'BDR' 컬럼이 없는 경우를 대비하여 처리 ***
-    if 'BDR' not in df.columns:
-        df['BDR'] = 'Unassigned'
-    else:
-        # 컬럼이 존재하더라도 빈 값(NaN)이 있을 수 있으므로 'Unassigned'로 채웁니다.
-        df['BDR'].fillna('Unassigned', inplace=True)
 
-
-
-    # BDR 및 AE 담당자 딜 필터링
-    df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
-
-    if df.empty:
-        st.warning("지정된 담당자(AE, BDR)에 해당하는 Deal이 없습니다.")
-        return pd.DataFrame()
 
     # 실패/드랍 사유 통합 컬럼 생성
     df['Failure Reason'] = df.get('hs_lost_reason', pd.Series(index=df.index, dtype=object))
@@ -430,35 +414,21 @@ if 'date_range' in locals() and df is not None and not df.empty:
                 st.info("선택된 기간에 BDR 데이터가 없습니다.")
 
         elif selected_pic in BDR_NAMES:
-                    st.subheader(f"{selected_pic} (BDR) 성과 요약")
-                    deals_created_count = len(filtered_df)
-                    meetings_booked_count = filtered_df['Meeting Booked Date'].notna().sum()
-                    conversion_rate = meetings_booked_count / deals_created_count if deals_created_count > 0 else 0
-                    
-                    col1, col2 = st.columns(2)
-                    col1.metric("총 생성 딜", f"{deals_created_count} 건")
-                    col2.metric("미팅 확정 건수", f"{meetings_booked_count} 건")
-                    st.metric("미팅 전환율 (Create → Booked)", f"{conversion_rate:.2%}")
-                    
-                    st.markdown("---")
-                    st.subheader("미팅 확정 Deal 목록")
-                    booked_deals = filtered_df[filtered_df['Meeting Booked Date'].notna()]
-                    st.dataframe(booked_deals[['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']], use_container_width=True)
-        
-                    st.markdown("---")
+            st.subheader(f"{selected_pic} (BDR) 성과 요약")
+            deals_created_count = len(filtered_df)
+            meetings_booked_count = filtered_df['Meeting Booked Date'].notna().sum()
+            conversion_rate = meetings_booked_count / deals_created_count if deals_created_count > 0 else 0
             
-                    st.subheader("BDR 기여 Deal 현황")
-                    # BDR 기여도 계산은 전체 데이터(df)에서 수행
-                    bdr_deals_all_time = df[df['BDR'] == selected_pic]
-                    bdr_contribution_stages = ['Contract Sent', 'Contract Signed', 'Payment Complete', 'Closed Won']
-                    contribution_counts = bdr_deals_all_time[bdr_deals_all_time['Deal Stage'].isin(bdr_contribution_stages)]['Deal Stage'].value_counts()
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("계약서 발송", f"{contribution_counts.get('Contract Sent', 0)} 건")
-                    col2.metric("계약서 서명", f"{contribution_counts.get('Contract Signed', 0)} 건")
-                    col3.metric("결제 완료", f"{contribution_counts.get('Payment Complete', 0)} 건")
-                    col4.metric("계약 성사", f"{contribution_counts.get('Closed Won', 0)} 건")
+            col1, col2 = st.columns(2)
+            col1.metric("총 생성 딜", f"{deals_created_count} 건")
+            col2.metric("미팅 확정 건수", f"{meetings_booked_count} 건")
+            st.metric("미팅 전환율 (Create → Booked)", f"{conversion_rate:.2%}")
             
+            st.markdown("---")
+            st.subheader("미팅 확정 딜 목록")
+            booked_deals = filtered_df[filtered_df['Meeting Booked Date'].notna()]
+            st.dataframe(booked_deals[['Deal name', 'Deal owner', 'Deal Stage', 'Meeting Booked Date']], use_container_width=True)
+
         elif selected_pic in AE_NAMES:
             # 공통 데이터 계산
             won_deals_pic = filtered_df[filtered_df['Deal Stage'].isin(won_stages)]
@@ -491,7 +461,7 @@ if 'date_range' in locals() and df is not None and not df.empty:
             st.markdown("---")
             
             # 담당자별 진행 중인 딜 현황 (Stage별)
-            st.subheader("진행 중인 Deal 현황 (Stage별)")
+            st.subheader("진행 중인 딜 현황 (Stage별)")
             if not open_deals_pic.empty:
                 stage_counts = open_deals_pic['Deal Stage'].value_counts().reset_index()
                 stage_counts.columns = ['Deal Stage', 'Count']
@@ -501,13 +471,13 @@ if 'date_range' in locals() and df is not None and not df.empty:
             else:
                 st.info("현재 진행 중인 딜이 없습니다.")
 
-            st.subheader("계약 성사 Deal 목록")
+            st.subheader("계약 성사 딜 목록")
             if not won_deals_pic.empty:
                 st.dataframe(won_deals_pic[['Deal name', 'Amount', 'Close Date']].sort_values(by='Amount', ascending=False), use_container_width=True)
             else:
                 st.info("선택된 기간에 계약 성사된 딜이 없습니다.")
 
-            st.subheader("30일 내 마감 예정 Deal")
+            st.subheader("30일 내 마감 예정 딜")
             today = datetime.now()
             thirty_days_later = today + timedelta(days=30)
             
