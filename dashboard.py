@@ -29,17 +29,19 @@ def load_data_from_hubspot():
         hubspot_client = HubSpot(access_token=access_token)
     except KeyError:
         st.error("HubSpot 접근 토큰이 설정되지 않았습니다. Streamlit Cloud의 Secrets 설정을 확인하세요.")
-        return None
+        return None, None
     except Exception as e:
         st.error(f"HubSpot 클라이언트 초기화 중 오류 발생: {e}")
-        return None
+        return None, None
 
     # 1. Owner 정보 로딩
     with st.spinner("1/4: Owner 정보 로딩..."):
         try:
             all_owners = hubspot_client.crm.owners.get_all()
             owner_id_to_name = {owner.id: f"{owner.first_name or ''} {owner.last_name or ''}".strip() for owner in all_owners}
-        except OwnersApiException: return st.error("Owner 정보 로딩 실패. API 권한을 확인하세요."), None
+        except OwnersApiException:
+            st.error("Owner 정보 로딩 실패. API 권한을 확인하세요.")
+            return None, None
 
     # 2. Deal Stage 정보 동적 로딩
     DEAL_STAGE_MAPPING = {}
@@ -50,10 +52,13 @@ def load_data_from_hubspot():
             for pipeline in deal_pipelines.results:
                 stages_api = hubspot_client.crm.pipelines.pipeline_stages_api
                 stages = stages_api.get_all(pipeline_id=pipeline.id, object_type="deals")
-                for stage in stages.results: DEAL_STAGE_MAPPING[stage.id] = stage.label
-        except PipelinesApiException: st.warning("Deal Stage 정보 로딩 실패.")
+                for stage in stages.results:
+                    DEAL_STAGE_MAPPING[stage.id] = stage.label
+        except PipelinesApiException:
+            st.warning("Deal Stage 정보 로딩 실패.")
+            DEAL_STAGE_MAPPING.update({'closedwon': 'Closed Won', 'closedlost': 'Closed Lost'})
 
-    # 3. 모든 Deal 속성 이름과 라벨 동적 매핑 (핵심 개선)
+    # 3. 모든 Deal 속성 이름과 라벨 동적 매핑
     properties_to_fetch = []
     name_to_label_map = {}
     with st.spinner("3/4: 모든 Deal 속성 정보 로딩..."):
@@ -63,46 +68,57 @@ def load_data_from_hubspot():
             for prop in deal_properties.results:
                 properties_to_fetch.append(prop.name)
                 name_to_label_map[prop.name] = prop.label
-        except PropertiesApiException: return st.error("Deal 속성 목록 로딩 실패. API 권한을 확인하세요."), None
+        except PropertiesApiException:
+            st.error("Deal 속성 목록 로딩 실패. API 권한을 확인하세요.")
+            return None, None
         
-    if not properties_to_fetch: return st.error("가져올 Deal 속성이 없습니다."), None
+    if not properties_to_fetch:
+        st.error("가져올 Deal 속성이 없습니다.")
+        return None, None
 
     # 4. 모든 속성을 사용하여 Deal 데이터 로딩
     with st.spinner("4/4: 모든 Deal 데이터 로딩... (시간 소요)"):
         try:
             all_deals_from_api = hubspot_client.crm.deals.get_all(properties=properties_to_fetch)
             all_deals = [deal.to_dict() for deal in all_deals_from_api]
-        except ApiException: return st.error("Deal 데이터 로딩 실패. API 권한을 확인하세요."), None
+        except ApiException:
+            st.error("Deal 데이터 로딩 실패. API 권한을 확인하세요.")
+            return None, None
     
-    if not all_deals: return pd.DataFrame()
+    if not all_deals:
+        return pd.DataFrame(), DEAL_STAGE_MAPPING
 
     df = pd.DataFrame([deal['properties'] for deal in all_deals])
 
-    # 데이터 전처리
     if not df.empty:
-        # 동적으로 생성한 맵을 사용하여 모든 컬럼의 이름을 라벨(사람이 보는 이름)로 변경
         df.rename(columns=name_to_label_map, inplace=True)
         
-        # 이제부터는 항상 일관된 '라벨' 이름으로 코드를 작성
-        if 'Amount' in df.columns: df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+        if 'Amount' in df.columns:
+            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
         
         if 'Deal Stage' in df.columns:
-            # Stage ID와 매핑된 Stage Label이 일치하지 않는 경우를 대비해 원본 ID 보존 후 매핑
             df['Deal Stage ID'] = df['Deal Stage'] 
             df['Deal Stage'] = df['Deal Stage'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['Deal Stage ID'])
 
-        if 'HubSpot Owner ID' in df.columns: df['Deal owner'] = df['HubSpot Owner ID'].astype(str).map(owner_id_to_name).fillna('Unassigned')
-        if 'BDR' in df.columns: df['BDR'] = df['BDR'].astype(str).map(owner_id_to_name).fillna('Unassigned')
-        else: df['BDR'] = 'Unassigned' # BDR 컬럼이 없는 경우 대비
+        if 'HubSpot Owner ID' in df.columns:
+            df['Deal owner'] = df['HubSpot Owner ID'].astype(str).map(owner_id_to_name).fillna('Unassigned')
+        else:
+            df['Deal owner'] = 'Unassigned'
+            
+        if 'BDR' in df.columns:
+            df['BDR'] = df['BDR'].astype(str).map(owner_id_to_name).fillna('Unassigned')
+        else:
+            df['BDR'] = 'Unassigned'
 
         date_cols = ['Create Date', 'Close Date', 'Last Modified Date', 'Expected Closing Date', 'Contract Sent Date', 'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date']
         korea_tz = pytz.timezone('Asia/Seoul')
         for col in date_cols:
-            if col in df.columns: df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
 
-        if 'Days in Stage' in df.columns: df['Days in Stage'] = pd.to_numeric(df['Days in Stage'], errors='coerce')
+        if 'Time in current stage (HH:mm:ss)' in df.columns:
+            df['Days in Stage'] = pd.to_numeric(df['Time in current stage (HH:mm:ss)'], errors='coerce') / 86400000
         
-        # 'Effective Close Date' 생성 로직 강화
         if 'Close Date' in df.columns and 'Expected Closing Date' in df.columns:
             df['Effective Close Date'] = df['Close Date'].fillna(df['Expected Closing Date'])
         elif 'Close Date' in df.columns:
@@ -110,16 +126,17 @@ def load_data_from_hubspot():
         else:
             df['Effective Close Date'] = pd.NaT
 
-        # 우리 팀 담당자 Deal만 필터링
         if 'Deal owner' in df.columns and 'BDR' in df.columns:
             df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
             
-    return df
+    return df, DEAL_STAGE_MAPPING
 
 # --- Streamlit UI 시작 ---
-st.title("🎯 GS KR Sales Dashboard (v3.0 Self-Correcting)")
+st.title("🎯8월 AUG_Augment, Upgrade, Grow")
 st.markdown("HubSpot의 **모든 데이터를 실시간으로 연동**하여 사각지대 없는 영업 현황 분석을 제공합니다.")
-df = load_data_from_hubspot()
+
+# 📌 오류 수정: 함수의 반환값을 두 개의 변수로 받도록 수정
+df, deal_stages_map = load_data_from_hubspot()
 
 if df is None or df.empty:
     st.info("HubSpot에서 분석할 데이터를 찾을 수 없거나 로딩에 실패했습니다.")
@@ -168,6 +185,7 @@ with tab1:
     num_lost_deals = len(lost_deals_total)
     win_rate = num_won_deals / (num_won_deals + num_lost_deals) if (num_won_deals + num_lost_deals) > 0 else 0
     avg_deal_value = total_revenue / num_won_deals if num_won_deals > 0 else 0
+    
     avg_sales_cycle = pd.NA
     if not won_deals_total.empty and 'Create Date' in won_deals_total.columns and 'Close Date' in won_deals_total.columns:
         valid_cycle_deals = won_deals_total.dropna(subset=['Create Date', 'Close Date'])
@@ -289,7 +307,7 @@ with tab3:
     st.markdown("---")
     st.subheader("👀 장기 체류 딜 (Stale Deals) 관리")
     stale_threshold = st.slider("며칠 이상 같은 단계에 머물면 '장기 체류'로 볼까요?", 7, 90, 30)
-    if 'Days in Stage' in base_df.columns:
+    if 'Days in Stage' in df.columns:
         stale_deals_df = base_df[(base_df['Deal Stage'].isin(open_stages)) & (base_df['Days in Stage'] > stale_threshold)]
         if not stale_deals_df.empty:
             st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 주의가 필요한 딜 목록입니다.")
@@ -297,7 +315,7 @@ with tab3:
         else:
             st.success(f"선택된 조건에 장기 체류 딜이 없습니다. 👍")
     else:
-        st.warning("'장기 체류 딜' 분석을 위해서는 HubSpot에서 'hs_time_in_current_stage' 속성을 가져와야 합니다.")
+        st.warning("'장기 체류 딜' 분석을 위해서는 HubSpot에서 'Time in current stage (HH:mm:ss)' 속성을 가져와야 합니다.")
 
 with tab4:
     st.header("실패 및 드랍 딜 회고")
