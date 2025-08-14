@@ -125,6 +125,13 @@ def load_data_from_hubspot():
     else:
         # 'hubspot_owner_id' 컬럼이 없거나 owner 정보를 가져오지 못한 경우
         df['Deal owner'] = 'Unassigned'
+        
+    # *** FIX: 필터링 전에 'BDR' 컬럼이 없는 경우를 대비하여 처리 ***
+    if 'BDR' not in df.columns:
+        df['BDR'] = 'Unassigned'
+    else:
+        # 컬럼이 존재하더라도 빈 값(NaN)이 있을 수 있으므로 'Unassigned'로 채웁니다.
+        df['BDR'].fillna('Unassigned', inplace=True)
 
 
 
