@@ -319,51 +319,65 @@ with tab1:
         else:
             st.info("단계별 소요 시간을 계산할 데이터가 부족합니다. 각 단계별 날짜 데이터가 입력되었는지 확인해주세요.")
 
-
 with tab2:
-    selected_pic = st.selectbox("분석할 담당자를 선택하세요.", ALL_PICS, key="pic_selector")
+    st.header("담당자별 상세 분석")
     
-    if selected_pic == 'All':
-        st.header("팀 전체 담당자별 성과 비교")
-    else:
-        st.header(f"'{selected_pic}' 상세 분석")
-    
-    if selected_pic == 'All' or selected_pic in AE_NAMES:
-        st.subheader("AE Leaderboard")
-        ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
-        if not ae_base_df.empty:
-            ae_stats = ae_base_df.groupby('Deal owner').apply(lambda x: pd.Series({
-                'Deals Won': (x['Deal Stage'].isin(won_stages)).sum(),
-                'Deals Lost': (x['Deal Stage'].isin(lost_stages)).sum(),
-                'Meetings Done': x['Meeting Done Date'].notna().sum(),
-                'Total Revenue': x.loc[x['Deal Stage'].isin(won_stages), 'Amount'].sum(),
-            })).reset_index()
-            ae_stats['Win Rate'] = (ae_stats['Deals Won'] / (ae_stats['Deals Won'] + ae_stats['Deals Lost'])).fillna(0)
-            ae_stats['Conversion (Meeting→Won)'] = (ae_stats['Deals Won'] / ae_stats['Meetings Done']).fillna(0)
-            
-            st.dataframe(ae_stats.sort_values(by='Total Revenue', ascending=False).style.format({
-                'Total Revenue': '${:,.0f}', 
-                'Win Rate': '{:.2%}',
-                'Conversion (Meeting→Won)': '{:.2%}'
-            }), use_container_width=True, hide_index=True)
-        else:
-            st.info("선택된 조건에 AE 데이터가 없습니다.")
+    # 📌 집계 로직 전면 수정: AE Leaderboard
+    st.subheader("AE Leaderboard")
+    ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
+    if not ae_base_df.empty:
+        # 1. won/lost 상태를 나타내는 컬럼 추가
+        ae_base_df = ae_base_df.copy()
+        ae_base_df['is_won'] = ae_base_df['Deal Stage'].isin(won_stages)
+        ae_base_df['is_lost'] = ae_base_df['Deal Stage'].isin(lost_stages)
+        
+        # 2. .agg()를 사용한 안전한 집계
+        ae_stats = ae_base_df.groupby('Deal owner').agg(
+            Deals_Won=('is_won', 'sum'),
+            Deals_Lost=('is_lost', 'sum'),
+            Meetings_Done=('Meeting Done Date', 'count'),
+            Total_Revenue=('Amount', lambda x: x[ae_base_df.loc[x.index, 'is_won']].sum())
+        ).reset_index()
 
-    if selected_pic == 'All' or selected_pic in BDR_NAMES:
-        st.subheader("BDR Leaderboard")
-        bdr_base_df = base_df[base_df['BDR'].isin(BDR_NAMES)]
-        if not bdr_base_df.empty:
-            bdr_stats = bdr_base_df.groupby('BDR').apply(lambda x: pd.Series({
-                'Deals Created': len(x),
-                'Meetings Booked': x['Meeting Booked Date'].notna().sum(),
-            })).reset_index()
-            bdr_stats['Conversion (Create→Booked)'] = (bdr_stats['Meetings Booked'] / bdr_stats['Deals Created']).fillna(0)
-            
-            st.dataframe(bdr_stats.sort_values(by='Meetings Booked', ascending=False).style.format({
+        # 3. 비율 계산
+        ae_stats['Win Rate'] = (ae_stats['Deals Won'] / (ae_stats['Deals Won'] + ae_stats['Deals Lost'])).fillna(0)
+        ae_stats['Conversion (Meeting→Won)'] = (ae_stats['Deals Won'] / ae_stats['Meetings Done']).fillna(0)
+        
+        st.dataframe(
+            ae_stats.sort_values(by='Total Revenue', ascending=False).style.format({
+                'Total_Revenue': '${:,.0f}', 
+                'Win Rate': '{:.2%}',
+                'Conversion (Meeting→Won)': '{:.2%}',
+                'Deals_Won': '{:,.0f}',
+                'Deals_Lost': '{:,.0f}',
+                'Meetings_Done': '{:,.0f}'
+            }), 
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("선택된 조건에 AE 데이터가 없습니다.")
+
+    # 📌 집계 로직 전면 수정: BDR Leaderboard
+    st.subheader("BDR Leaderboard")
+    bdr_base_df = base_df[base_df['BDR'].isin(BDR_NAMES)]
+    if not bdr_base_df.empty:
+        # .agg()를 사용한 안전한 집계
+        bdr_stats = bdr_base_df.groupby('BDR').agg(
+            Deals_Created=('Deal name', 'size'), # size는 NaN 포함 모든 행을 카운트
+            Meetings_Booked=('Meeting Booked Date', 'count') # count는 NaN 제외 카운트
+        ).reset_index()
+
+        # 비율 계산
+        bdr_stats['Conversion (Create→Booked)'] = (bdr_stats['Meetings Booked'] / bdr_stats['Deals Created']).fillna(0)
+        
+        st.dataframe(
+            bdr_stats.sort_values(by='Meetings Booked', ascending=False).style.format({
                 'Conversion (Create→Booked)': '{:.2%}'
-            }), use_container_width=True, hide_index=True)
-        else:
-            st.info("선택된 조건에 BDR 데이터가 없습니다.")
+            }), 
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("선택된 조건에 BDR 데이터가 없습니다.")
 
 
 with tab3:
