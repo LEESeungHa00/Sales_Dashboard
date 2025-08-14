@@ -50,14 +50,12 @@ def load_data_from_hubspot():
             st.error(f"Owner 정보 로딩 실패. API 권한(crm.objects.owners.read)을 확인하세요. 오류: {e.body}")
             return None
 
-    # 📌 Deal Owner의 내부 이름 'hubspot_owner_id'가 이미 포함되어 있습니다.
+    # 📌 'hs_v2_date_entered_current_stage' 추가
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", "hs_lastmodifieddate",
-        "hubspot_owner_id", 
-        "sdr", 
-        "hs_lost_reason", "contract_sent_date", "demo_booked",
+        "hubspot_owner_id", "sdr", "hs_lost_reason", "contract_sent_date", "demo_booked",
         "meeting_done_date", "contract_signed_date", "payment_complete_date",
-        "hs_expected_close_date", "hs_time_in_current_stage"
+        "hs_expected_close_date", "hs_v2_date_entered_current_stage", "deal_dropped"
     ]
     
     all_deals = []
@@ -85,34 +83,29 @@ def load_data_from_hubspot():
             if col not in df.columns:
                 df[col] = pd.NaT if 'date' in col else None
         
-        # 📌 'hubspot_owner_id'를 'Deal owner'로 이름 변경하는 로직이 이미 포함되어 있습니다.
         rename_map = {
             'dealname': 'Deal name', 'dealstage': 'Deal Stage ID', 'amount': 'Amount',
             'createdate': 'Create Date', 'closedate': 'Close Date', 'hs_lastmodifieddate': 'Last Modified Date',
-            'hs_time_in_current_stage': 'Days in Stage', 'hs_expected_close_date': 'Expected Closing Date',
+            'hs_v2_date_entered_current_stage': 'Date Entered Current Stage',
+            'expected_closing_date': 'Expected Closing Date',
             'hs_lost_reason': 'Failure Reason', 'contract_sent_date': 'Contract Sent Date',
             'demo_booked': 'Meeting Booked Date', 
-            'demo_done_date': 'Meeting Done Date',
+            'meeting_done_date': 'Meeting Done Date',
             'contract_signed_date': 'Contract Signed Date', 'payment_complete_date': 'Payment Complete Date',
-            'hubspot_owner_id': 'Deal owner',
-            'sdr': 'BDR'
+            'hubspot_owner_id': 'Deal owner', 'sdr': 'BDR', 'deal_dropped': 'Dropped Date'
         }
         df.rename(columns=rename_map, inplace=True)
 
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
         df['Deal Stage'] = df['Deal Stage ID'].astype(str).map(DEAL_STAGE_MAPPING).fillna(df['Deal Stage ID'])
-        # 📌 ID를 실제 담당자 이름으로 최종 변환하는 로직도 이미 포함되어 있습니다.
         df['Deal owner'] = df['Deal owner'].astype(str).map(owner_id_to_name).fillna('Unassigned')
         df['BDR'] = df['BDR'].astype(str).map(owner_id_to_name).fillna('Unassigned')
 
-        date_cols = ['Create Date', 'Close Date', 'Last Modified Date', 'Expected Closing Date', 'Contract Sent Date', 'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date']
+        date_cols = ['Create Date', 'Close Date', 'Last Modified Date', 'Expected Closing Date', 'Contract Sent Date', 'Meeting Booked Date', 'Meeting Done Date', 'Contract Signed Date', 'Payment Complete Date', 'Dropped Date', 'Date Entered Current Stage']
         korea_tz = pytz.timezone('Asia/Seoul')
         for col in date_cols:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce', utc=True).dt.tz_convert(korea_tz)
-
-        if 'Days in Stage' in df.columns:
-            df['Days in Stage'] = pd.to_numeric(df['Days in Stage'], errors='coerce') / 86400000
 
         df['Effective Close Date'] = df['Close Date'].fillna(df['Expected Closing Date'])
         df = df[(df['Deal owner'].isin(AE_NAMES)) | (df['BDR'].isin(BDR_NAMES))].copy()
@@ -293,15 +286,24 @@ with tab3:
     st.markdown("---")
     st.subheader("👀 장기 체류 딜 (Stale Deals) 관리")
     stale_threshold = st.slider("며칠 이상 같은 단계에 머물면 '장기 체류'로 볼까요?", 7, 90, 30)
-    if 'Days in Stage' in df.columns:
-        stale_deals_df = base_df[(base_df['Deal Stage'].isin(open_stages)) & (base_df['Days in Stage'] > stale_threshold)]
+    
+    # 📌 'Date Entered Current Stage'를 사용하여 장기 체류 딜 계산
+    if 'Date Entered Current Stage' in base_df.columns:
+        open_deals_base = base_df[base_df['Deal Stage'].isin(open_stages)].copy()
+        today = datetime.now(korea_tz)
+        
+        # 날짜 데이터가 있는 경우에만 계산
+        open_deals_base.dropna(subset=['Date Entered Current Stage'], inplace=True)
+        open_deals_base['Days in Stage'] = (today - open_deals_base['Date Entered Current Stage']).dt.days
+
+        stale_deals_df = open_deals_base[open_deals_base['Days in Stage'] > stale_threshold]
         if not stale_deals_df.empty:
             st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 주의가 필요한 딜 목록입니다.")
-            st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True, hide_index=True)
+            st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.0f}일'}), use_container_width=True, hide_index=True)
         else:
             st.success(f"선택된 조건에 장기 체류 딜이 없습니다. 👍")
     else:
-        st.warning("'장기 체류 딜' 분석을 위해서는 HubSpot에서 'Time in current stage (HH:mm:ss)' 속성을 가져와야 합니다.")
+        st.warning("'장기 체류 딜' 분석을 위해서는 HubSpot에서 'Date entered current stage' 속성('hs_v2_date_entered_current_stage')을 가져와야 합니다.")
 
 with tab4:
     st.header("실패 및 드랍 딜 회고")
@@ -319,8 +321,12 @@ with tab4:
             st.info("실패/드랍 사유 데이터가 충분하지 않습니다. HubSpot에 데이터를 입력해주세요.")
 
         st.subheader("실패/드랍 딜 상세 목록 (최신순)")
-        display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', reason_col]
+        display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Dropped Date', 'Failure Reason']
         existing_display_cols = [col for col in display_cols if col in lost_dropped_deals.columns]
-        st.dataframe(lost_dropped_deals.sort_values(by='Last Modified Date', ascending=False)[existing_display_cols].style.format({'Amount': '${:,.0f}'}), use_container_width=True, hide_index=True)
+        
+        # 'Dropped Date'가 있으면 그것으로 정렬, 없으면 'Last Modified Date'로 정렬
+        sort_col = 'Dropped Date' if 'Dropped Date' in existing_display_cols else 'Last Modified Date'
+        
+        st.dataframe(lost_dropped_deals.sort_values(by=sort_col, ascending=False)[existing_display_cols].style.format({'Amount': '${:,.0f}'}), use_container_width=True, hide_index=True)
     else:
         st.success("선택된 기간에 실패 또는 드랍된 딜이 없습니다.")
