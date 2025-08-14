@@ -92,7 +92,7 @@ def load_data_from_hubspot():
             'hs_time_in_current_stage': 'Days in Stage', 'hs_expected_close_date': 'Expected Closing Date',
             'hs_lost_reason': 'Failure Reason', 'contract_sent_date': 'Contract Sent Date',
             'demo_booked': 'Meeting Booked Date', 
-            'meeting_done_date': 'Meeting Done Date',
+            'demo_done_date': 'Meeting Done Date',
             'contract_signed_date': 'Contract Signed Date', 'payment_complete_date': 'Payment Complete Date',
             'hubspot_owner_id': 'Deal owner',
             'sdr': 'BDR'
