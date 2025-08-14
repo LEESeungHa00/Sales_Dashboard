@@ -211,7 +211,7 @@ with st.sidebar:
         # 📥 허브스팟 원본 데이터 CSV 다운로드 버튼
         csv_data = df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            label="📥 허브스팟 원본 데이터 다운로드",
+            label="📥 연동된 DEAL LIST 다운로드",
             data=csv_data,
             file_name=f"hubspot_deals_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
@@ -252,7 +252,9 @@ with st.sidebar:
 
 # --- 메인 대시보드 영역 ---
 if 'date_range' in locals() and df is not None and not df.empty:
-    start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+    # 📌 수정된 부분: Streamlit date_input에서 받은 timezone-naive 날짜에 타임존 정보를 추가합니다.
+    start_date = pd.to_datetime(date_range[0]).tz_localize('Asia/Seoul')
+    end_date = pd.to_datetime(date_range[1]).tz_localize('Asia/Seoul') + timedelta(days=1, seconds=-1)
     
     base_df = df[(df[filter_col] >= start_date) & (df[filter_col] <= end_date)].copy()
     
@@ -544,12 +546,12 @@ if 'date_range' in locals() and df is not None and not df.empty:
         
         focus_deals = all_open_deals[
             (all_open_deals['Effective Close Date'].notna()) &
-            (all_open_deals['Effective Close Date'] >= pd.to_datetime(today.date())) &
-            (all_open_deals['Effective Close Date'] <= pd.to_datetime(days_later.date()))
+            (all_open_deals['Effective Close Date'] >= pd.to_datetime(today.date()).tz_localize('Asia/Seoul')) &
+            (all_open_deals['Effective Close Date'] <= pd.to_datetime(days_later.date()).tz_localize('Asia/Seoul'))
         ].sort_values('Amount', ascending=False)
         
         if not focus_deals.empty:
-            focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - today).dt.days
+            focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - today.astimezone(pd.Timestamp('now').tz_localize('Asia/Seoul'))).dt.days
             st.dataframe(focus_deals[['Deal name', 'Deal owner', 'Amount', 'Effective Close Date', 'Days to Close']].rename(columns={'Effective Close Date': 'Expected Close Date'}).style.format({'Amount': '${:,.0f}'}), use_container_width=True)
         else:
             st.info(f"향후 {focus_days}일 내에 마감될 것으로 예상되는 딜이 없습니다.")
@@ -644,4 +646,3 @@ if 'date_range' in locals() and df is not None and not df.empty:
             )
         else:
             st.info("'Closed Lost' 또는 'Dropped' 상태의 딜이 없습니다.")
-
