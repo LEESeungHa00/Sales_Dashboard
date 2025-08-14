@@ -91,33 +91,53 @@ def load_data_from_hubspot():
         return pd.DataFrame() # 빈 데이터프레임 반환
 
     # API 결과(deal 객체)를 딕셔너리 리스트로 변환
-    deals_list = [deal.to_dict()['properties'] for deal in all_deals]
-    df = pd.DataFrame(deals_list)
-
+    df = pd.DataFrame(all_deals)
     # --- 데이터 전처리 ---
+
+if not df.empty:
+    # 1. 'Deal Stage' 컬럼 매핑
+    df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
     # 컬럼 이름 변경 (API 이름 -> 대시보드에서 사용하는 이름)
-    rename_map = {
+    # 컬럼 이름을 코드와 호환되도록 변경
+
+    # 2.'hubspot_owner_id'와 'BDR' 컬럼 매핑
+    # Owner ID를 이름으로 매핑하고, 매핑되지 않은 경우 'Unassigned'로 처리합니다.
+    df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name).fillna('Unassigned')
+    df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
+        
+    # 3. 날짜 컬럼 형식 통일
+    date_cols = [
+            'closedate', 'createdate', 'contract_sent_date',
+            'contract_signed_date', 'payment_complete_date', 'effective_close_date',
+            'lastmodifieddate'
+    ]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
+            df[col] = df[col].dt.tz_convert('Asia/Seoul') # 한국 시간으로 변환
+        
+    # 'hs_time_in_current_stage'는 API에서 초 단위로 제공됩니다. 이를 일 단위로 변환합니다.
+    if 'hs_time_in_current_stage' in df.columns:
+        df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (24*60*60)
+    else:
+        df['hs_time_in_current_stage'] = (datetime.now() - df['lastmodifieddate']).dt.total_seconds() / (24*60*60)
+    
+    # 컬럼 이름을 기존 코드와 호환되도록 변경
+df.rename(columns={
         'dealname': 'Deal name',
         'dealstage': 'Deal Stage',
         'amount': 'Amount',
         'createdate': 'Create Date',
         'closedate': 'Close Date',
         'lastmodifieddate': 'Last Modified Date',
-        'hs_record_id': 'Record ID',
-        'bdr': 'BDR',
-        'hs_lost_reason': 'Close lost reason',
-        'close_lost_reason': 'Close lost reason', 
-        'dropped_reason_remark': 'Dropped Reason (Remark)',
-        'contract_sent_date': 'Contract Sent Date',
-        'meeting_booked_date': 'Meeting Booked Date',
-        'meeting_done_date': 'Meeting Done Date',
-        'contract_signed_date': 'Contract Signed Date',
-        'payment_complete_date': 'Payment Complete Date',
-        'hs_expected_close_date': 'Expected Closing Date',
-        'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)'
-    }
-    df.rename(columns=rename_map, inplace=True)
+        'hubspot_owner_id': 'hubspot_owner_id',
+        'bdr': 'BDR'
+}, inplace=True)
+    
+    # 전처리된 데이터프레임 반환
+return df
 
+df = load_data_from_hubspot()
     
     # 필수 컬럼 누락 시 기본 생성
     required_cols = list(rename_map.values())
