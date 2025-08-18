@@ -17,7 +17,7 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
 # --- Deal Stage ID 매핑 ---
-# ✅ FIX #3: Deal Stage 정의를 최신 기준으로 유지
+# ✅ 사용자가 제공한 최신 최종 기준으로 전체 매핑을 업데이트했습니다.
 DEAL_STAGE_MAPPING = {
     'closedwon': 'Proposal Sent & Service Validation', 
     '108159779': 'Contract Sent', 
@@ -25,20 +25,19 @@ DEAL_STAGE_MAPPING = {
     'qualifiedtobuy': 'Meeting Booked',
     'decisionmakerboughtin': 'Meeting Done',
     '998897766': 'Initial Contact',
-    '998897767' : 'Response Received',
+    '998897767': 'Response Received',
     '109960046': 'Dropped',
     '129259600': 'Price Negotiation',
     '108159780': 'Contract Signed',
     'closedlost': 'Closed Lost',
     'appointmentscheduled': 'New',
     '107905727': 'Lost',
-    '109960046' : 'Dropped',
     '1105439053': 'Cancel'
 }
 
-# ✅ FIX #3: '계약 성사' 및 '실패' 기준을 명확히 정의
+# ✅ 재정의된 '계약 성사' 및 '실패' 기준
 won_stages = ['Contract Signed', 'Payment Complete']
-lost_stages = ['Closed Lost', 'Dropped', 'Lost']
+lost_stages = ['Closed Lost', 'Dropped', 'Lost', 'Cancel']
 
 # --- 데이터 로딩 및 전처리 함수 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -64,7 +63,6 @@ def load_data_from_hubspot():
         except Exception as e:
             st.error(f"Owner 데이터 로딩 중 오류 발생: {e}"); return None
 
-    # ✅ FIX #1, #5: 모든 기능에 필요한 속성 전체 복원 및 추가
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
         "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
@@ -76,7 +74,7 @@ def load_data_from_hubspot():
 
     all_deals = []
     after = None
-    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다..."):
+    with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (시간이 걸릴 수 있습니다)"):
         try:
             while True:
                 page = hubspot_client.crm.deals.basic_api.get_page(limit=100, after=after, properties=properties_to_fetch)
@@ -98,14 +96,12 @@ def load_data_from_hubspot():
     df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
     df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name).fillna('Unassigned')
     
-    # ✅ FIX #4: BDR 속성 로딩 안정성 강화
     if 'bdr' in df.columns:
         df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
     else:
-        st.warning("주의: 'bdr' 속성을 HubSpot에서 찾을 수 없습니다. BDR 리더보드가 비어있을 수 있습니다. HubSpot 속성 internal name을 확인하세요.")
+        st.warning("주의: 'bdr' 속성을 HubSpot에서 찾을 수 없습니다. BDR 리더보드가 비어있을 수 있습니다.")
         df['BDR'] = 'Unassigned'
     
-    # ✅ FIX #1: 모든 날짜 컬럼 처리 복원
     date_cols = [
         'closedate', 'createdate', 'hs_lastmodifieddate', 'hs_expected_close_date',
         'hs_v2_date_entered_current_stage', 'contract_sent_date', 'contract_signed_date',
@@ -117,7 +113,6 @@ def load_data_from_hubspot():
             if df[col].notna().any():
                 df[col] = df[col].dt.tz_convert('Asia/Seoul')
 
-    # ✅ FIX #5: 모든 컬럼 이름 변경(rename) 복원
     rename_map = {
         'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
         'createdate': 'Create Date', 'closedate': 'Close Date',
@@ -155,10 +150,21 @@ if df is None or df.empty:
 # --- 사이드바 ---
 with st.sidebar:
     st.header("⚙️ 설정")
-    # ... (기존 사이드바 코드는 생략, 동일하게 유지)
+    st.success("데이터 로딩 완료!")
+    csv_data = df.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="📥 HubSpot DEAL LIST",
+        data=csv_data,
+        file_name=f"hubspot_deals_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv"
+    )
+    
+    sales_quota = st.number_input("분기/월별 Sales Quota (목표 매출, USD) 입력", min_value=0, value=500000, step=10000)
+    st.markdown("---")
     filter_type = st.radio(
         "**날짜 필터 기준 선택**",
         ('생성일 기준 (Create Date)', '예상/확정 마감일 기준', '최종 수정일 기준 (Last Modified Date)'),
+        help="**생성일 기준:** 특정 기간에 생성된 딜 분석\n\n**예상/확정 마감일 기준:** 특정 기간에 마감될 딜 분석\n\n**최종 수정일 기준:** 특정 기간에 업데이트된 딜 분석"
     )
     if filter_type == '생성일 기준 (Create Date)': filter_col = 'Create Date'
     elif filter_type == '예상/확정 마감일 기준': filter_col = 'Effective Close Date'
@@ -186,8 +192,10 @@ with tab1:
     st.header("팀 전체 현황 요약")
     
     won_deals_total = base_df[base_df['Deal Stage'].isin(won_stages)]
+    
     total_revenue, num_won_deals = won_deals_total['Amount'].sum(), len(won_deals_total)
     avg_deal_value = total_revenue / num_won_deals if num_won_deals > 0 else 0
+    
     if not won_deals_total.empty and 'Close Date' in won_deals_total.columns and 'Create Date' in won_deals_total.columns:
         avg_sales_cycle = (won_deals_total['Close Date'] - won_deals_total['Create Date']).dt.days.mean()
     else:
@@ -205,16 +213,18 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**단계별 전환율 (Funnel)**")
-        # ✅ FIX #2: Funnel Chart 로직 복원
+        # ✅ Funnel Chart 로직을 새로운 Stage 흐름에 맞게 수정
         funnel_stages_map = {
             'Initial Contact': 'Create Date', 
             'Meeting Booked': "Meeting Booked Date",
             'Meeting Done': "Meeting Done Date",
+            'Contract Sent': "Contract Sent Date",
             'Contract Signed': "Contract Signed Date"
         }
         funnel_data = []
+        funnel_data.append({'Stage': 'Initial Contact', 'Count': base_df['Create Date'].notna().sum()})
         for stage, date_col in funnel_stages_map.items():
-            if date_col in base_df.columns:
+            if stage != 'Initial Contact' and date_col in base_df.columns:
                 count = base_df[date_col].notna().sum()
                 funnel_data.append({'Stage': stage, 'Count': count})
 
@@ -227,11 +237,12 @@ with tab1:
 
     with col2:
         st.markdown("**단계별 평균 소요 시간 (일)**")
-        # ✅ FIX #1: 단계별 소요 시간 계산 복원
+        # ✅ 단계별 소요 시간 계산 로직을 새로운 Stage 흐름에 맞게 수정
         stage_transitions = [
             {'label': 'Create → Meeting Booked', 'start': 'Create Date', 'end': 'Meeting Booked Date'},
             {'label': 'Booked → Done', 'start': 'Meeting Booked Date', 'end': 'Meeting Done Date'},
-            {'label': 'Done → Signed', 'start': 'Meeting Done Date', 'end': 'Contract Signed Date'}
+            {'label': 'Done → Contract Sent', 'start': 'Meeting Done Date', 'end': 'Contract Sent Date'},
+            {'label': 'Sent → Signed', 'start': 'Contract Sent Date', 'end': 'Contract Signed Date'}
         ]
         avg_times = []
         for trans in stage_transitions:
@@ -258,7 +269,6 @@ with tab2:
         st.subheader("AE Leaderboard")
         ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
         if not ae_base_df.empty:
-            # ✅ FIX #3: 'Deals Won' 집계 로직을 won_stages 기준으로 명확히 함
             ae_stats = ae_base_df.groupby('Deal owner').apply(lambda x: pd.Series({
                 'Deals Won': x[x['Deal Stage'].isin(won_stages)].shape[0],
                 'Total Revenue': x.loc[x['Deal Stage'].isin(won_stages), 'Amount'].sum()
@@ -284,8 +294,6 @@ with tab2:
                 bdr_stats = pd.DataFrame(bdr_performance).sort_values(by='Meetings Booked (KPI)', ascending=False)
                 st.dataframe(bdr_stats.style.format({'Conversion Rate': '{:.2%}', 'Initial Contacts': '{:,}', 'Meetings Booked (KPI)': '{:,}'}), use_container_width=True, hide_index=True)
     else:
-        # 개인별 상세 분석 기능 복원
-        filtered_df = base_df[(base_df['Deal owner'] == selected_pic) | (base_df['BDR'] == selected_pic)]
         st.info(f"'{selected_pic}'의 개인 상세 분석 기능은 이 곳에 구현됩니다.")
 
 with tab3:
@@ -327,9 +335,8 @@ with tab4:
     lost_dropped_deals = df[df['Deal Stage'].isin(lost_stages)]
     if not lost_dropped_deals.empty:
         sorted_deals = lost_dropped_deals.sort_values(by='Last Modified Date', ascending=False)
-        # ✅ FIX #5: 'Dropped Reason (Remark)' 컬럼 표시 복원
         display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', 'Failure Reason', 'Dropped Reason (Remark)']
         existing_display_cols = [col for col in display_cols if col in sorted_deals.columns]
         st.dataframe(sorted_deals[existing_display_cols].style.format({'Amount': '${:,.0f}'}), use_container_width=True)
     else:
-        st.info("'Closed Lost', 'Dropped', 'Lost' 상태의 딜이 없습니다.")
+        st.info("'Closed Lost', 'Dropped', 'Lost', 'Cancel' 상태의 딜이 없습니다.")
