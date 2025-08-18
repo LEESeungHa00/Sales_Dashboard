@@ -66,10 +66,10 @@ def load_data_from_hubspot():
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
         "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
-        "close_lost_reason", "dropped_reason_remark",
-        "hs_expected_close_date", "hs_v2_date_entered_current_stage",
+        "dropped_reason", "remark__free_text_",
+        "expected_closing_date", "hs_v2_date_entered_current_stage",
         "contract_sent_date", "contract_signed_date", 
-        "payment_complete_date", "meeting_booked_date", "meeting_done_date"
+        "payment_complete_date", "demo_booked", "demo_done_date"
     ]
 
     all_deals = []
@@ -117,16 +117,16 @@ def load_data_from_hubspot():
         'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
         'createdate': 'Create Date', 'closedate': 'Close Date',
         'hs_lastmodifieddate': 'Last Modified Date', 
-        'hs_expected_close_date': 'Expected Closing Date',
+        'expected_closing_date': 'Expected Closing Date',
         'hs_lost_reason': 'Failure Reason', 
         'hs_v2_date_entered_current_stage': 'Date Entered Stage',
-        'close_lost_reason': 'Close lost reason',
-        'dropped_reason_remark': 'Dropped Reason (Remark)',
+        'dropped_reason': 'Close lost reason',
+        'remark__free_text_"': 'Dropped Reason (Remark)',
         'contract_sent_date': 'Contract Sent Date',
         'contract_signed_date': 'Contract Signed Date',
         'payment_complete_date': 'Payment Complete Date',
-        'meeting_booked_date': 'Meeting Booked Date',
-        'meeting_done_date': 'Meeting Done Date'
+        'demo_booked': 'Meeting Booked Date',
+        'demo_done_date': 'Meeting Done Date'
     }
     df.rename(columns=rename_map, inplace=True)
     
