@@ -62,17 +62,13 @@ def load_data_from_hubspot():
         except Exception as e:
             st.error(f"Owner 데이터 로딩 중 오류 발생: {e}"); return None
 
-    # ✅ FIX: 사용자가 제공한 실제 HubSpot 내부 이름으로 전체 수정
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
         "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
         "dropped_reason", "remark__free_text_",
-        "expected_closing_date", # hs_expected_close_date -> expected_closing_date
-        "hs_v2_date_entered_current_stage",
+        "expected_closing_date", "hs_v2_date_entered_current_stage",
         "contract_sent_date", "contract_signed_date", 
-        "payment_complete_date", 
-        "demo_booked", # meeting_booked_date -> demo_booked
-        "demo_done_date" # meeting_done_date -> demo_done_date
+        "payment_complete_date", "demo_booked", "demo_done_date"
     ]
 
     all_deals = []
@@ -105,7 +101,6 @@ def load_data_from_hubspot():
         st.warning("주의: 'bdr' 속성을 HubSpot에서 찾을 수 없습니다. BDR 리더보드가 비어있을 수 있습니다.")
         df['BDR'] = 'Unassigned'
     
-    # ✅ FIX: 실제 내부 이름에 맞춰 날짜 컬럼 목록 수정
     date_cols = [
         'closedate', 'createdate', 'hs_lastmodifieddate', 'expected_closing_date',
         'hs_v2_date_entered_current_stage', 'contract_sent_date', 'contract_signed_date',
@@ -117,7 +112,6 @@ def load_data_from_hubspot():
             if df[col].notna().any():
                 df[col] = df[col].dt.tz_convert('Asia/Seoul')
 
-    # ✅ FIX: 실제 내부 이름에 맞춰 rename_map 수정
     rename_map = {
         'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
         'createdate': 'Create Date', 'closedate': 'Close Date',
@@ -201,7 +195,7 @@ with tab1:
     total_revenue, num_won_deals = won_deals_total['Amount'].sum(), len(won_deals_total)
     avg_deal_value = total_revenue / num_won_deals if num_won_deals > 0 else 0
     
-    if not won_deals_total.empty and 'Close Date' in won_deals_total.columns and 'Create Date' in won_deals_total.columns:
+    if not won_deals_total.empty and won_deals_total['Close Date'].notna().all() and won_deals_total['Create Date'].notna().all():
         avg_sales_cycle = (won_deals_total['Close Date'] - won_deals_total['Create Date']).dt.days.mean()
     else:
         avg_sales_cycle = 0
@@ -228,7 +222,7 @@ with tab1:
         funnel_data = []
         funnel_data.append({'Stage': 'Initial Contact', 'Count': base_df['Create Date'].notna().sum()})
         for stage, date_col in funnel_stages_map.items():
-            if stage != 'Initial Contact' and date_col in base_df.columns:
+            if stage != 'Initial Contact' and base_df.get(date_col) is not None:
                 count = base_df[date_col].notna().sum()
                 funnel_data.append({'Stage': stage, 'Count': count})
 
@@ -250,7 +244,7 @@ with tab1:
         avg_times = []
         for trans in stage_transitions:
             start_col, end_col = trans['start'], trans['end']
-            if start_col in base_df.columns and end_col in base_df.columns:
+            if base_df.get(start_col) is not None and base_df.get(end_col) is not None:
                 valid_deals = base_df.dropna(subset=[start_col, end_col])
                 if not valid_deals.empty:
                     time_diff = (valid_deals[end_col] - valid_deals[start_col]).dt.days
@@ -272,10 +266,11 @@ with tab2:
         st.subheader("AE Leaderboard")
         ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
         if not ae_base_df.empty:
+            # ✅ FIX: DataFrameGroupBy.apply 경고 해결
             ae_stats = ae_base_df.groupby('Deal owner').apply(lambda x: pd.Series({
                 'Deals Won': x[x['Deal Stage'].isin(won_stages)].shape[0],
                 'Total Revenue': x.loc[x['Deal Stage'].isin(won_stages), 'Amount'].sum()
-            })).reset_index().sort_values(by='Total Revenue', ascending=False)
+            }), include_groups=False).reset_index().sort_values(by='Total Revenue', ascending=False)
             st.dataframe(ae_stats.style.format({'Total Revenue': '${:,.0f}','Deals Won': '{:,}'}), use_container_width=True, hide_index=True)
 
         st.subheader("BDR Leaderboard")
@@ -307,9 +302,9 @@ with tab3:
     days_later = today + timedelta(days=focus_days)
     all_open_deals = df[~df['Deal Stage'].isin(won_stages + lost_stages)]
     focus_deals = all_open_deals[
-        (all_open_deals['Effective Close Date'].notna()) &
-        (all_open_deals['Effective Close Date'] >= today) &
-        (all_open_deals['Effective Close Date'] <= days_later)
+        (all_open_deals.get('Effective Close Date').notna()) &
+        (all_open_deals.get('Effective Close Date') >= today) &
+        (all_open_deals.get('Effective Close Date') <= days_later)
     ].sort_values('Amount', ascending=False)
     if not focus_deals.empty:
         focus_deals['Days to Close'] = (focus_deals['Effective Close Date'] - today).dt.days
@@ -321,15 +316,21 @@ with tab3:
     st.subheader("👀 장기 체류 딜 (Stale Deals) 관리")
     open_deals_base = base_df[~base_df['Deal Stage'].isin(won_stages + lost_stages)]
     stale_threshold = st.slider("며칠 이상 같은 단계에 머물면 '장기 체류'로 볼까요?", 7, 90, 30)
+    
+    # ✅ FIX: cannot subtract... 오류 방지를 위해 로직 안정성 강화
     if 'Date Entered Stage' in open_deals_base.columns:
         open_deals_stale = open_deals_base.copy().dropna(subset=['Date Entered Stage'])
-        open_deals_stale['Days in Stage'] = (today - open_deals_stale['Date Entered Stage']).dt.days
-        stale_deals_df = open_deals_stale[open_deals_stale['Days in Stage'] > stale_threshold]
-        if not stale_deals_df.empty:
-            st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
-            st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.0f}일'}), use_container_width=True)
+        # Series의 데이터 타입이 datetime인지 한번 더 확인
+        if pd.api.types.is_datetime64_any_dtype(open_deals_stale['Date Entered Stage']):
+            open_deals_stale['Days in Stage'] = (today - open_deals_stale['Date Entered Stage']).dt.days
+            stale_deals_df = open_deals_stale[open_deals_stale['Days in Stage'] > stale_threshold]
+            if not stale_deals_df.empty:
+                st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
+                st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.0f}일'}), use_container_width=True)
+            else:
+                st.success("선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
         else:
-            st.success("선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
+            st.error("'Date Entered Stage' 컬럼이 날짜 형식이 아니어서 '장기 체류 딜'을 계산할 수 없습니다.")
     else:
         st.warning("'장기 체류 딜' 분석을 위해서는 HubSpot에서 'hs_v2_date_entered_current_stage' 속성을 포함하여 가져와야 합니다.")
 
