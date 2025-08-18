@@ -12,7 +12,7 @@ import pytz
 st.set_page_config(layout="wide", page_title="GS KR Sales Dashboard")
 
 # --- 담당자 리스트 ---
-BDR_NAMES = ['Sohee (Blair) Kim', 'Soorim Yu', 'Gyeol Jang', 'Minyoung Kim']
+BDR_NAMES = ['Sohee (Blair) Kim', 'Soorim Yu', 'Gyeol Jang', 'Minyoung Kim', 'Hyewon Han','Minjeong Jang','Gustavo Bae']
 AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park', 'Haran Bae']
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
