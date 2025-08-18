@@ -65,7 +65,7 @@ def load_data_from_hubspot():
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
         "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
-        "dropped_reason", "remark__free_text_",
+        "dropped_reason", "remark__fre_text_",
         "expected_closing_date", "hs_v2_date_entered_current_stage",
         "contract_sent_date", "contract_signed_date", 
         "payment_complete_date", "demo_booked", "demo_done_date"
@@ -120,7 +120,7 @@ def load_data_from_hubspot():
         'hs_lost_reason': 'Failure Reason', 
         'hs_v2_date_entered_current_stage': 'Date Entered Stage',
         'dropped_reason': 'Dropped Reason',
-        'remark__free_text_': 'Dropped Reason (Remark)',
+        'remark__fre_text_': 'Dropped Reason (Remark)',
         'contract_sent_date': 'Contract Sent Date',
         'contract_signed_date': 'Contract Signed Date',
         'payment_complete_date': 'Payment Complete Date',
@@ -266,11 +266,10 @@ with tab2:
         st.subheader("AE Leaderboard")
         ae_base_df = base_df[base_df['Deal owner'].isin(AE_NAMES)]
         if not ae_base_df.empty:
-            # ✅ FIX: DataFrameGroupBy.apply 경고 해결
-            ae_stats = ae_base_df.groupby('Deal owner').apply(lambda x: pd.Series({
+            ae_stats = ae_base_df.groupby('Deal owner', as_index=False).apply(lambda x: pd.Series({
                 'Deals Won': x[x['Deal Stage'].isin(won_stages)].shape[0],
                 'Total Revenue': x.loc[x['Deal Stage'].isin(won_stages), 'Amount'].sum()
-            }), include_groups=False).reset_index().sort_values(by='Total Revenue', ascending=False)
+            }), include_groups=False).sort_values(by='Total Revenue', ascending=False)
             st.dataframe(ae_stats.style.format({'Total Revenue': '${:,.0f}','Deals Won': '{:,}'}), use_container_width=True, hide_index=True)
 
         st.subheader("BDR Leaderboard")
@@ -291,8 +290,55 @@ with tab2:
             if bdr_performance:
                 bdr_stats = pd.DataFrame(bdr_performance).sort_values(by='Meetings Booked (KPI)', ascending=False)
                 st.dataframe(bdr_stats.style.format({'Conversion Rate': '{:.2%}', 'Initial Contacts': '{:,}', 'Meetings Booked (KPI)': '{:,}'}), use_container_width=True, hide_index=True)
+    
+    # ✅ FIX: 개인별 상세 분석 기능 전체 복원
     else:
-        st.info(f"'{selected_pic}'의 개인 상세 분석 기능은 이 곳에 구현됩니다.")
+        if selected_pic in BDR_NAMES:
+            filtered_df = base_df[(base_df['BDR'] == selected_pic) | (base_df['Deal owner'] == selected_pic)]
+        else: # AE
+            filtered_df = base_df[base_df['Deal owner'] == selected_pic]
+        
+        if filtered_df.empty:
+            st.warning("선택된 담당자의 데이터가 없습니다.")
+        else:
+            won_deals_pic = filtered_df[filtered_df['Deal Stage'].isin(won_stages)]
+            lost_deals_pic = filtered_df[filtered_df['Deal Stage'].isin(lost_stages)]
+            open_deals_pic = filtered_df[~filtered_df['Deal Stage'].isin(won_stages + lost_stages)]
+
+            st.subheader(f"{selected_pic} 성과 요약")
+            
+            if selected_pic in AE_NAMES:
+                meetings_done = filtered_df['Meeting Done Date'].notna().sum()
+                contracts_sent = filtered_df['Contract Sent Date'].notna().sum()
+                deals_won = len(won_deals_pic)
+                total_revenue_pic = won_deals_pic['Amount'].sum()
+                
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("진행 중인 딜", f"{len(open_deals_pic):,} 건")
+                c2.metric("미팅 완료", f"{meetings_done:,} 건")
+                c3.metric("계약 성사", f"{deals_won:,} 건")
+                c4.metric("총 계약 금액", f"${total_revenue_pic:,.0f}")
+            
+            if selected_pic in BDR_NAMES:
+                initial_contacts = filtered_df[filtered_df['Deal Stage'] == 'Initial Contact'].shape[0]
+                meetings_booked = filtered_df[filtered_df['Deal Stage'] == 'Meeting Booked'].shape[0]
+                conversion_rate = meetings_booked / initial_contacts if initial_contacts > 0 else 0.0
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Initial Contacts", f"{initial_contacts:,} 건")
+                c2.metric("Meetings Booked", f"{meetings_booked:,} 건")
+                c3.metric("전환율", f"{conversion_rate:.2%}")
+
+            st.markdown("---")
+            st.subheader("진행 중인 딜 현황 (Stage별)")
+            if not open_deals_pic.empty:
+                stage_counts = open_deals_pic['Deal Stage'].value_counts().reset_index()
+                stage_counts.columns = ['Deal Stage', 'Count']
+                fig_stage_dist = px.bar(stage_counts, x='Count', y='Deal Stage', orientation='h', text='Count')
+                st.plotly_chart(fig_stage_dist, use_container_width=True)
+            else:
+                st.info("현재 진행 중인 딜이 없습니다.")
+
 
 with tab3:
     st.header("주요 딜 관리 및 리스크 분석")
@@ -317,10 +363,8 @@ with tab3:
     open_deals_base = base_df[~base_df['Deal Stage'].isin(won_stages + lost_stages)]
     stale_threshold = st.slider("며칠 이상 같은 단계에 머물면 '장기 체류'로 볼까요?", 7, 90, 30)
     
-    # ✅ FIX: cannot subtract... 오류 방지를 위해 로직 안정성 강화
     if 'Date Entered Stage' in open_deals_base.columns:
         open_deals_stale = open_deals_base.copy().dropna(subset=['Date Entered Stage'])
-        # Series의 데이터 타입이 datetime인지 한번 더 확인
         if pd.api.types.is_datetime64_any_dtype(open_deals_stale['Date Entered Stage']):
             open_deals_stale['Days in Stage'] = (today - open_deals_stale['Date Entered Stage']).dt.days
             stale_deals_df = open_deals_stale[open_deals_stale['Days in Stage'] > stale_threshold]
