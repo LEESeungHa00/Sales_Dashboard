@@ -64,7 +64,7 @@ def load_data_from_hubspot():
 
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
-        "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
+        "hs_lastmodifieddate", "hubspot_owner_id", "sdr", "hs_lost_reason",
         "dropped_reason", "remark__free_text_",
         "expected_closing_date", "hs_v2_date_entered_current_stage",
         "contract_sent_date", "contract_signed_date", 
@@ -95,10 +95,10 @@ def load_data_from_hubspot():
     df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
     df['Deal owner'] = df['hubspot_owner_id'].map(owner_id_to_name).fillna('Unassigned')
     
-    if 'bdr' in df.columns:
-        df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
+    if 'sdr' in df.columns:
+        df['BDR'] = df['sdr'].map(owner_id_to_name).fillna('Unassigned')
     else:
-        st.warning("주의: 'bdr' 속성을 HubSpot에서 찾을 수 없습니다. BDR 리더보드가 비어있을 수 있습니다.")
+        st.warning("주의: 'sdr' 속성을 HubSpot에서 찾을 수 없습니다. BDR 리더보드가 비어있을 수 있습니다.")
         df['BDR'] = 'Unassigned'
     
     date_cols = [
