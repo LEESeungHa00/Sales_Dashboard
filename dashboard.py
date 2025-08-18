@@ -17,7 +17,6 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
 # --- Deal Stage ID 매핑 ---
-# ✅ 사용자가 제공한 최신 최종 기준으로 전체 매핑을 업데이트했습니다.
 DEAL_STAGE_MAPPING = {
     'closedwon': 'Proposal Sent & Service Validation', 
     '108159779': 'Contract Sent', 
@@ -35,7 +34,7 @@ DEAL_STAGE_MAPPING = {
     '1105439053': 'Cancel'
 }
 
-# ✅ 재정의된 '계약 성사' 및 '실패' 기준
+# '계약 성사' 및 '실패' 기준
 won_stages = ['Contract Signed', 'Payment Complete']
 lost_stages = ['Closed Lost', 'Dropped', 'Lost', 'Cancel']
 
@@ -63,13 +62,17 @@ def load_data_from_hubspot():
         except Exception as e:
             st.error(f"Owner 데이터 로딩 중 오류 발생: {e}"); return None
 
+    # ✅ FIX: 사용자가 제공한 실제 HubSpot 내부 이름으로 전체 수정
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
         "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
         "dropped_reason", "remark__free_text_",
-        "expected_closing_date", "hs_v2_date_entered_current_stage",
+        "expected_closing_date", # hs_expected_close_date -> expected_closing_date
+        "hs_v2_date_entered_current_stage",
         "contract_sent_date", "contract_signed_date", 
-        "payment_complete_date", "demo_booked", "demo_done_date"
+        "payment_complete_date", 
+        "demo_booked", # meeting_booked_date -> demo_booked
+        "demo_done_date" # meeting_done_date -> demo_done_date
     ]
 
     all_deals = []
@@ -102,10 +105,11 @@ def load_data_from_hubspot():
         st.warning("주의: 'bdr' 속성을 HubSpot에서 찾을 수 없습니다. BDR 리더보드가 비어있을 수 있습니다.")
         df['BDR'] = 'Unassigned'
     
+    # ✅ FIX: 실제 내부 이름에 맞춰 날짜 컬럼 목록 수정
     date_cols = [
-        'closedate', 'createdate', 'hs_lastmodifieddate', 'hs_expected_close_date',
+        'closedate', 'createdate', 'hs_lastmodifieddate', 'expected_closing_date',
         'hs_v2_date_entered_current_stage', 'contract_sent_date', 'contract_signed_date',
-        'payment_complete_date', 'meeting_booked_date', 'meeting_done_date'
+        'payment_complete_date', 'demo_booked', 'demo_done_date'
     ]
     for col in date_cols:
         if col in df.columns:
@@ -113,6 +117,7 @@ def load_data_from_hubspot():
             if df[col].notna().any():
                 df[col] = df[col].dt.tz_convert('Asia/Seoul')
 
+    # ✅ FIX: 실제 내부 이름에 맞춰 rename_map 수정
     rename_map = {
         'dealname': 'Deal name', 'dealstage': 'Deal Stage', 'amount': 'Amount',
         'createdate': 'Create Date', 'closedate': 'Close Date',
@@ -120,8 +125,8 @@ def load_data_from_hubspot():
         'expected_closing_date': 'Expected Closing Date',
         'hs_lost_reason': 'Failure Reason', 
         'hs_v2_date_entered_current_stage': 'Date Entered Stage',
-        'dropped_reason': 'Close lost reason',
-        'remark__free_text_"': 'Dropped Reason (Remark)',
+        'dropped_reason': 'Dropped Reason',
+        'remark__free_text_': 'Dropped Reason (Remark)',
         'contract_sent_date': 'Contract Sent Date',
         'contract_signed_date': 'Contract Signed Date',
         'payment_complete_date': 'Payment Complete Date',
@@ -213,7 +218,6 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**단계별 전환율 (Funnel)**")
-        # ✅ Funnel Chart 로직을 새로운 Stage 흐름에 맞게 수정
         funnel_stages_map = {
             'Initial Contact': 'Create Date', 
             'Meeting Booked': "Meeting Booked Date",
@@ -237,7 +241,6 @@ with tab1:
 
     with col2:
         st.markdown("**단계별 평균 소요 시간 (일)**")
-        # ✅ 단계별 소요 시간 계산 로직을 새로운 Stage 흐름에 맞게 수정
         stage_transitions = [
             {'label': 'Create → Meeting Booked', 'start': 'Create Date', 'end': 'Meeting Booked Date'},
             {'label': 'Booked → Done', 'start': 'Meeting Booked Date', 'end': 'Meeting Done Date'},
@@ -335,7 +338,7 @@ with tab4:
     lost_dropped_deals = df[df['Deal Stage'].isin(lost_stages)]
     if not lost_dropped_deals.empty:
         sorted_deals = lost_dropped_deals.sort_values(by='Last Modified Date', ascending=False)
-        display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', 'Failure Reason', 'Dropped Reason (Remark)']
+        display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', 'Failure Reason', 'Dropped Reason', 'Dropped Reason (Remark)']
         existing_display_cols = [col for col in display_cols if col in sorted_deals.columns]
         st.dataframe(sorted_deals[existing_display_cols].style.format({'Amount': '${:,.0f}'}), use_container_width=True)
     else:
