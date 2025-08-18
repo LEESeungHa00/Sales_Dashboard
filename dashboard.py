@@ -20,17 +20,20 @@ ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 # ✅ FIX #3: Deal Stage 정의를 최신 기준으로 유지
 DEAL_STAGE_MAPPING = {
     'closedwon': 'Proposal Sent & Service Validation', 
-    '108159779': 'Contract Signed', 
+    '108159779': 'Contract Sent', 
     '108877850': 'Payment Complete',
     'qualifiedtobuy': 'Meeting Booked',
     'decisionmakerboughtin': 'Meeting Done',
     '998897766': 'Initial Contact',
+    '998897767' : 'Response Received',
     '109960046': 'Dropped',
     '129259600': 'Price Negotiation',
-    '108159780': 'Closing',
+    '108159780': 'Contract Signed',
     'closedlost': 'Closed Lost',
-    'appointmentscheduled': 'Appointment Scheduled',
-    '107905727': 'Lost'
+    'appointmentscheduled': 'New',
+    '107905727': 'Lost',
+    '109960046' : 'Dropped',
+    '1105439053': 'Cancel'
 }
 
 # ✅ FIX #3: '계약 성사' 및 '실패' 기준을 명확히 정의
