@@ -8,6 +8,7 @@ from hubspot.crm.deals.exceptions import ApiException
 from hubspot.crm.owners.exceptions import ApiException as OwnersApiException
 import pytz
 
+
 # --- 페이지 설정 ---
 st.set_page_config(layout="wide", page_title="GS KR Sales Dashboard")
 
@@ -83,13 +84,15 @@ def load_data_from_hubspot():
     all_deals = []
     after = None
     
+    # ✅ 최종 수정된 속성 목록
     properties_to_fetch = [
         "dealname", "dealstage", "amount", "createdate", "closedate", 
-        "lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
-        "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
-        "meeting_booked_date", "meeting_done_date", "contract_signed_date",
+        "hs_lastmodifieddate", "hubspot_owner_id", "bdr", "hs_lost_reason",
+        "close_lost_reason", "remark__free_text_", "dropped_reason", 
+        "contract_sent_date", # 'contract_sent___date'와 둘 중 정확한 것 확인 필요
+        "demo_booked", "demo_done_date", "contract_signed_date",
         "payment_complete_date", "hs_expected_close_date", 
-        "hs_time_in_current_stage"
+        "hs_v2_date_entered_current_stage", "deal_dropped", "proposal_sent_date"
     ]
 
     with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (5분 내외의 대기가 필요할 수 있습니다)"):
@@ -119,18 +122,12 @@ def load_data_from_hubspot():
     df = pd.DataFrame([deal['properties'] for deal in all_deals])
 
     if not df.empty:
-        required_cols = [
-            'dealname', 'dealstage', 'amount', 'createdate', 'closedate',
-            'lastmodifieddate', 'hubspot_owner_id', 'bdr', 'hs_lost_reason',
-            'close_lost_reason', 'dropped_reason_remark', 'contract_sent_date',
-            'meeting_booked_date', 'meeting_done_date', 'contract_signed_date',
-            'payment_complete_date', 'hs_expected_close_date',
-            'hs_time_in_current_stage'
-        ]
+        # properties_to_fetch에 있는 모든 컬럼을 required_cols로 사용
+        required_cols = properties_to_fetch
         for col in required_cols:
             if col not in df.columns:
-                df[col] = pd.NaT
-                
+                df[col] = pd.NaT if 'date' in col else None
+                  
         df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
         df['dealstage'] = df['dealstage'].map(DEAL_STAGE_MAPPING).fillna(df['dealstage'])
 
@@ -139,36 +136,44 @@ def load_data_from_hubspot():
             df['BDR'] = df['bdr'].map(owner_id_to_name).fillna('Unassigned')
         else:
             df['BDR'] = 'Unassigned'
-
+        
+        # ✅ 최종 수정된 날짜 컬럼 목록
         date_cols = [
             'closedate', 'createdate', 'contract_sent_date',
             'contract_signed_date', 'payment_complete_date', 'hs_expected_close_date',
-            'lastmodifieddate', 'meeting_booked_date', 'meeting_done_date'
+            'hs_lastmodifieddate', 'demo_booked', 'demo_done_date',
+            'hs_v2_date_entered_current_stage', 'deal_dropped', 'proposal_sent_date'
         ]
         for col in date_cols:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce', utc=True)
-                df[col] = df[col].dt.tz_convert('Asia/Seoul')
+                # NaT가 아닌 경우에만 시간대 변환
+                if df[col].notna().any():
+                    df[col] = df[col].dt.tz_convert('Asia/Seoul')
         
-        if 'hs_time_in_current_stage' in df.columns:
-            df['hs_time_in_current_stage'] = pd.to_numeric(df['hs_time_in_current_stage'], errors='coerce') / (24*60*60)
-        
-    rename_map = {
-        'dealname': 'Deal name',
-        'dealstage': 'Deal Stage',
-        'amount': 'Amount',
-        'createdate': 'Create Date',
-        'closedate': 'Close Date',
-        'lastmodifieddate': 'Last Modified Date',
-        'hubspot_owner_id': 'hubspot_owner_id',
-        'bdr': 'BDR_ID',
-        'hs_time_in_current_stage': 'Time in current stage (HH:mm:ss)',
-        'hs_expected_close_date': 'Expected Closing Date',
-        'hs_lost_reason': 'Failure Reason',
-        'close_lost_reason': 'Close lost reason',
-        'dropped_reason_remark': 'Dropped Reason (Remark)',
-    }
-    df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
+        # ✅ 최종 수정된 컬럼 이름 변경(rename) 맵
+        rename_map = {
+            'dealname': 'Deal name',
+            'dealstage': 'Deal Stage',
+            'amount': 'Amount',
+            'createdate': 'Create Date',
+            'closedate': 'Close Date',
+            'hs_lastmodifieddate': 'Last Modified Date',
+            'hubspot_owner_id': 'hubspot_owner_id',
+            'bdr': 'BDR_ID',
+            'hs_expected_close_date': 'Expected Closing Date',
+            'hs_lost_reason': 'Failure Reason',
+            'close_lost_reason': 'Close lost reason',
+            'remark__free_text_': 'Dropped Reason (Remark)',
+            'dropped_reason': 'Dropped Reason',
+            'demo_booked': 'Meeting Booked Date',
+            'demo_done_date': 'Meeting Done Date',
+            'contract_sent_date': 'Contract Sent Date',
+            'contract_signed_date': 'Contract Signed Date',
+            'payment_complete_date': 'Payment Complete Date'
+            # hs_v2_date_entered_current_stage는 계산에만 사용하므로 직접 rename하지 않음
+        }
+        df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
     
     if 'Expected Closing Date' in df.columns and 'Close Date' in df.columns:
         df['Effective Close Date'] = df['Expected Closing Date'].fillna(df['Close Date'])
@@ -219,8 +224,8 @@ with st.sidebar:
         )
         st.markdown("---")
 
-        date_cols = ['Create Date', 'Effective Close Date', 'Last Modified Date']
-        if not df.empty and all(col in df.columns for col in date_cols):
+        date_cols_for_filter = ['Create Date', 'Effective Close Date', 'Last Modified Date']
+        if not df.empty and all(col in df.columns for col in date_cols_for_filter):
             if filter_type == '생성일 기준 (Create Date)':
                 filter_col = 'Create Date'
             elif filter_type == '예상/확정 마감일 기준':
@@ -602,21 +607,24 @@ if 'date_range' in locals() and df is not None and not df.empty:
 
         stale_threshold = st.slider("며칠 이상 같은 단계에 머물면 '장기 체류'로 볼까요?", 7, 90, 30, key='stale_slider')
         
-        stale_col = 'Time in current stage (HH:mm:ss)'
+        # ✅ 최종 수정된 '장기 체류 딜' 계산 로직
+        stale_col = 'hs_v2_date_entered_current_stage'
         if stale_col in open_deals_base.columns:
-            open_deals_stale = open_deals_base.copy()
-            open_deals_stale['Days in Stage'] = open_deals_stale[stale_col]
+            open_deals_stale = open_deals_base.copy().dropna(subset=[stale_col])
+            
+            # 오늘 날짜와 스테이지 진입 날짜를 빼서 'Days in Stage'를 계산
+            today = pd.Timestamp.now(tz='Asia/Seoul')
+            open_deals_stale['Days in Stage'] = (today - open_deals_stale[stale_col]).dt.days
             
             stale_deals_df = open_deals_stale[open_deals_stale['Days in Stage'] > stale_threshold]
-
+            
             if not stale_deals_df.empty:
                 st.warning(f"{stale_threshold}일 이상 같은 단계에 머물러 있는 '주의'가 필요한 딜 목록입니다.")
-                st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.1f}일'}), use_container_width=True)
+                st.dataframe(stale_deals_df[['Deal name', 'Deal owner', 'Deal Stage', 'Amount', 'Days in Stage']].sort_values('Days in Stage', ascending=False).style.format({'Amount': '${:,.0f}', 'Days in Stage': '{:.0f}일'}), use_container_width=True)
             else:
                 st.success(f"선택된 조건에 해당하는 장기 체류 딜이 없습니다. 👍")
         else:
-            st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'hs_time_in_current_stage'** 속성을 포함하여 가져와야 합니다.")
-
+            st.warning(f"'장기 체류 딜' 분석을 위해서는 HubSpot에서 **'hs_v2_date_entered_current_stage'** 속성을 포함하여 가져와야 합니다.")
 
     with tab4:
         st.header("실패 및 드랍 딜 회고")
@@ -627,10 +635,14 @@ if 'date_range' in locals() and df is not None and not df.empty:
         if not lost_dropped_deals.empty:
             sorted_deals = lost_dropped_deals.sort_values(by='Last Modified Date', ascending=False)
             
-            display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', 'Failure Reason']
+            # ✅ 최종 수정된 컬럼 목록 (Dropped Reason 추가)
+            display_cols = ['Deal name', 'Deal owner', 'Amount', 'Deal Stage', 'Last Modified Date', 'Failure Reason', 'Dropped Reason']
             
+            # 데이터프레임에 있는 컬럼만 필터링해서 표시
+            existing_display_cols = [col for col in display_cols if col in sorted_deals.columns]
+
             st.dataframe(
-                sorted_deals[display_cols].style.format({'Amount': '${:,.0f}'}),
+                sorted_deals[existing_display_cols].style.format({'Amount': '${:,.0f}'}),
                 use_container_width=True
             )
         else:
