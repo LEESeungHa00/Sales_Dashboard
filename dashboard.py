@@ -690,4 +690,3 @@ if 'date_range' in locals() and df is not None and not df.empty:
             )
         else:
             st.info("'Closed Lost' 또는 'Dropped' 상태의 딜이 없습니다.")
-```
