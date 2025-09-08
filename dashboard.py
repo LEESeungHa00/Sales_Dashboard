@@ -94,7 +94,7 @@ def load_data_from_hubspot():
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
         "payment_complete_date", "hs_expected_close_date", 
-        "hs_time_in_current_stage", "hs_associations_company" # Company association 추가
+        "hs_time_in_current_stage", "hs_associations_company"
     ]
 
     with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (5분 내외의 대기가 필요할 수 있습니다)"):
@@ -690,3 +690,4 @@ if 'date_range' in locals() and df is not None and not df.empty:
             )
         else:
             st.info("'Closed Lost' 또는 'Dropped' 상태의 딜이 없습니다.")
+```
