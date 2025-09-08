@@ -7,6 +7,7 @@ from hubspot import HubSpot
 from hubspot.crm.deals.exceptions import ApiException
 from hubspot.crm.owners.exceptions import ApiException as OwnersApiException
 from hubspot.crm.companies.exceptions import ApiException as CompaniesApiException
+from hubspot.crm.companies.batch.exceptions import BatchApiException as CompaniesBatchApiException
 import pytz
 
 # --- 페이지 설정 ---
@@ -124,24 +125,30 @@ def load_data_from_hubspot():
 
     # Company 데이터 로딩 및 병합
     company_data = {}
-    company_ids = []
+    company_ids_to_fetch = []
     for deal in all_deals:
         if deal.get('associations') and 'companies' in deal['associations'] and deal['associations']['companies']['results']:
-            company_ids.append(deal['associations']['companies']['results'][0]['id'])
+            company_ids_to_fetch.append(deal['associations']['companies']['results'][0]['id'])
 
-    unique_company_ids = list(set(company_ids))
+    unique_company_ids = list(set(company_ids_to_fetch))
     
     if unique_company_ids:
         with st.spinner("HubSpot에서 Company 정보를 불러오는 중입니다..."):
             try:
-                for company_id in unique_company_ids:
-                    company = hubspot_client.crm.companies.basic_api.get_by_id(
-                        company_id, properties=["account_size"]
+                # Company ID를 100개씩 묶어 배치 API로 호출
+                batches = [unique_company_ids[i:i + 100] for i in range(0, len(unique_company_ids), 100)]
+                for batch in batches:
+                    batch_response = hubspot_client.crm.companies.batch_api.read(
+                        inputs=[{"id": company_id} for company_id in batch],
+                        properties=["account_size"]
                     )
-                    if 'account_size' in company.properties:
-                        company_data[company_id] = company.properties['account_size']
-            except CompaniesApiException as e:
-                st.warning(f"Company 정보를 가져오는 중 오류가 발생했습니다: {e}")
+                    for company in batch_response.results:
+                        if 'account_size' in company.properties:
+                            company_data[company.id] = company.properties['account_size']
+            except CompaniesBatchApiException as e:
+                st.warning(f"Company 배치 API 호출 중 오류가 발생했습니다: {e}")
+            except Exception as e:
+                st.warning(f"Company 정보를 가져오는 중 예상치 못한 오류가 발생했습니다: {e}")
     
     # 딜 데이터프레임에 account_size 추가
     df['company_id'] = [
