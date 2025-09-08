@@ -94,7 +94,7 @@ def load_data_from_hubspot():
         "close_lost_reason", "dropped_reason_remark", "contract_sent_date",
         "meeting_booked_date", "meeting_done_date", "contract_signed_date",
         "payment_complete_date", "hs_expected_close_date", 
-        "hs_time_in_current_stage", "hs_associations_company"
+        "hs_time_in_current_stage"
     ]
 
     with st.spinner("HubSpot에서 모든 Deal 데이터를 불러오는 중입니다... (5분 내외의 대기가 필요할 수 있습니다)"):
@@ -126,11 +126,11 @@ def load_data_from_hubspot():
 
     # Company 데이터 로딩 및 병합
     company_data = {}
-    company_ids = [
-        deal['associations']['companies']['results'][0]['id']
-        for deal in all_deals
-        if 'companies' in deal['associations'] and deal['associations']['companies']['results']
-    ]
+    company_ids = []
+    for deal in all_deals:
+        if deal.get('associations') and 'companies' in deal['associations'] and deal['associations']['companies']['results']:
+            company_ids.append(deal['associations']['companies']['results'][0]['id'])
+
     unique_company_ids = list(set(company_ids))
     
     if unique_company_ids:
@@ -147,9 +147,7 @@ def load_data_from_hubspot():
     
     # 딜 데이터프레임에 account_size 추가
     df['company_id'] = [
-        deal['associations']['companies']['results'][0]['id']
-        if 'companies' in deal['associations'] and deal['associations']['companies']['results']
-        else None
+        deal.get('associations', {}).get('companies', {}).get('results', [{}])[0].get('id')
         for deal in all_deals
     ]
     df['account_size'] = df['company_id'].map(company_data).fillna('Not Defined')
