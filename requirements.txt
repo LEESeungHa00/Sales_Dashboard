@@ -1,6 +1,6 @@
 streamlit
 pandas
 plotly
-hubspot-api-client
+hubspot-api-client>=12.1.0
 simplejson
 pytz
