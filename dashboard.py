@@ -18,8 +18,6 @@ AE_NAMES = ['Seheon Bok', 'Buheon Shin', 'Ethan Lee', 'Iseul Lee', 'Samin Park',
 ALL_PICS = ['All'] + sorted(BDR_NAMES + AE_NAMES)
 
 # --- Deal Stage ID 매핑 ---
-# HubSpot의 Deal Stage ID와 이름을 매핑합니다.
-# 이 값들은 HubSpot 계정 설정에 따라 달라질 수 있습니다.
 DEAL_STAGE_MAPPING = {
     '109960046': 'Prospecting',
     '108877850': 'Proposal Submitted',
